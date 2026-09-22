@@ -1,9 +1,13 @@
-# RSS 피드 목록 (자유롭게 추가/삭제)
+# 항상 구독하는 RSS 피드 (주제와 무관하게 수집, 관련도는 점수 단계에서 걸러짐)
 rss:
   - https://simonwillison.net/atom/everything/
-  - https://hnrss.org/newest?q=AI+automation
-  - https://hnrss.org/newest?q=Claude+Code
-  - https://hnrss.org/newest?q=MCP+server
+
+# Hacker News 검색 질의 — 텔레그램으로 주제를 설정하지 않았을 때만 사용
+# (주제 설정 시 LLM이 만든 hn_queries로 대체됨)
+hn_search_default:
+  - AI automation
+  - Claude Code
+  - MCP server
 
 # YouTube 채널 ID 목록 (channel_id, 자막 기반 수집)
 # 채널 ID 찾는 법: 채널 페이지 소스에서 "channelId" 검색, 또는

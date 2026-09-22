@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from collectors import storage
-from pipeline import llm
+from pipeline import llm, topic
 
 BLUEPRINT_DIR = ROOT / "blueprints"
 LOG_DIR = ROOT / "logs"
@@ -28,10 +28,12 @@ CATEGORIES = ["업무자동화", "AI에이전트", "개발도구", "노코드", 
 
 NEWS_SCORE_CAP = 60       # kind='뉴스' 항목의 점수 상한 (블루프린트 생성 제외)
 
-SCORE_PROMPT = """당신은 "AI 기반 업무 효율화·자동화" 정보 큐레이터입니다.
+SCORE_PROMPT = """당신은 정보 큐레이터입니다. 사용자가 현재 관심 있는 주제는 다음과 같습니다:
+"{topic}"
+
 아래 수집 항목들을 두 축으로 평가하세요.
 
-1) relevance (0~100): AI 기반 업무 효율화·자동화 주제와의 관련도
+1) relevance (0~100): 위 관심 주제와의 관련도 (주제와 무관하면 아무리 좋은 글이라도 낮게)
 2) actionability (0~100): 개인/소규모 팀이 "직접 구현·구축할 수 있는" 정도
    - 높음: 구체적 기법, 오픈소스 도구, 워크플로우 설계, 코드/설정 예시, 재현 가능한 사례
    - 낮음: 제품 출시 소식, 기능 업데이트 안내, 인용/의견/감상, 홍보, 랜딩페이지만 있는 소개
@@ -60,6 +62,7 @@ def final_score(relevance: int, actionability: int, kind: str) -> int:
 
 BLUEPRINT_PROMPT = """당신은 AI 자동화 구현 컨설턴트입니다. 아래 정보 항목을 개인 MacBook 환경에서
 실제로 구현하기 위한 블루프린트를 한국어 마크다운으로 작성하세요.
+사용자의 현재 관심 주제는 "{topic}"이며, 이 관점에서 어떻게 활용할지를 중심으로 서술하세요.
 
 구성 (이 순서대로):
 # (제목)
@@ -109,6 +112,7 @@ def score_items(conn, log) -> int:
     if not rows:
         return 0
 
+    current_topic = topic.topic_text(conn)
     scored = 0
     for i in range(0, len(rows), SCORE_BATCH):
         batch = rows[i:i + SCORE_BATCH]
@@ -122,6 +126,7 @@ def score_items(conn, log) -> int:
             for r in batch
         ]
         prompt = SCORE_PROMPT.format(
+            topic=current_topic,
             categories="/".join(CATEGORIES),
             items=json.dumps(payload, ensure_ascii=False, indent=1),
         )
@@ -137,8 +142,10 @@ def score_items(conn, log) -> int:
             if res.get("id") not in valid_ids:
                 continue
             kind = res.get("kind") if res.get("kind") in ("구현", "뉴스") else "뉴스"
+            # 점수는 채점 시점의 주제 기준이므로 topic도 그 시점 값으로 덮어씀
             conn.execute(
-                """UPDATE items SET score=?, kind=?, category=?, summary=?, processed_at=?, status='processed'
+                """UPDATE items SET score=?, kind=?, category=?, summary=?, processed_at=?,
+                                    topic=?, status='processed'
                    WHERE id=?""",
                 (
                     final_score(int(res.get("relevance", 0)), int(res.get("actionability", 0)), kind),
@@ -146,6 +153,7 @@ def score_items(conn, log) -> int:
                     res.get("category", "기타"),
                     res.get("summary", ""),
                     now,
+                    current_topic,
                     res["id"],
                 ),
             )
@@ -167,10 +175,13 @@ def generate_blueprints(conn, log) -> int:
         return 0
 
     BLUEPRINT_DIR.mkdir(exist_ok=True)
+    current_topic = topic.topic_text(conn)
     made = 0
     for r in rows:
         title = r["title"] or (r["summary"] or "").split("\n")[0] or f"item-{r['id']}"
-        prompt = BLUEPRINT_PROMPT.format(title=title, url=r["url"], content=(r["content"] or "")[:3000])
+        prompt = BLUEPRINT_PROMPT.format(
+            topic=current_topic, title=title, url=r["url"], content=(r["content"] or "")[:3000]
+        )
         try:
             md = llm.complete(prompt, model="sonnet")
         except Exception:

@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from collectors import rss, storage, threads, youtube
+from pipeline import topic
 from scripts.threads_auth import refresh_if_needed
 
 LOG_DIR = ROOT / "logs"
@@ -40,6 +41,9 @@ def main():
         log.warning("토큰 갱신 실패 (수집은 계속): %s", e)
 
     conn = storage.connect()
+    current_topic = topic.topic_text(conn)
+    log.info("현재 주제: %s", current_topic)
+
     total_new = 0
     for collector in (threads, rss, youtube):
         name = collector.__name__.rsplit(".", 1)[-1]
@@ -48,7 +52,7 @@ def main():
         except Exception:
             log.exception("%s 수집기 실패", name)
             continue
-        new = storage.upsert_items(conn, items)
+        new = storage.upsert_items(conn, items, topic=current_topic)
         total_new += new
         log.info("%s: 수집 %d건 / 신규 %d건", name, len(items), new)
 

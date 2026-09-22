@@ -6,21 +6,25 @@
 """
 
 import logging
+import sys
 from pathlib import Path
 
 import httpx
-import yaml
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from pipeline import topic
+
 GRAPH = "https://graph.threads.net/v1.0"
 
 log = logging.getLogger(__name__)
 
 
 def load_keywords() -> list[str]:
-    data = yaml.safe_load((ROOT / "config" / "keywords.yaml").read_text())
-    return data["keywords"]
+    """현재 주제의 확장 키워드, 주제 미설정 시 config/keywords.yaml."""
+    return topic.keywords()
 
 
 def collect() -> list[dict]:

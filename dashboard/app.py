@@ -3,6 +3,7 @@
 실행: uv run streamlit run dashboard/app.py
 """
 
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -34,9 +35,19 @@ def load_items() -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql_query(
             "SELECT id, score, kind, category, status, source, title, summary, content, url, "
-            "blueprint_path, published_at, collected_at FROM items",
+            "blueprint_path, published_at, collected_at, topic FROM items",
             conn,
         )
+
+
+@st.cache_data(ttl=60)
+def load_current_topic() -> str | None:
+    with sqlite3.connect(DB_PATH) as conn:
+        try:
+            row = conn.execute("SELECT value FROM settings WHERE key='topic'").fetchone()
+        except sqlite3.OperationalError:
+            return None
+    return json.loads(row[0])["topic"] if row else None
 
 
 def score_badge(score) -> str:
@@ -92,6 +103,11 @@ if not DB_PATH.exists():
     st.stop()
 
 df = load_items()
+current_topic = load_current_topic()
+st.caption(
+    f"현재 주제: **{current_topic}**" if current_topic
+    else "현재 주제: (기본) AI 기반 업무 효율화·자동화 — 텔레그램에 「주제 설정 : …」을 보내 변경"
+)
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("전체 수집", len(df))
@@ -104,6 +120,7 @@ tab_feed, tab_table, tab_blueprints = st.tabs(["피드", "테이블", "블루프
 with tab_feed:
     with st.sidebar:
         st.header("필터")
+        topics = st.multiselect("주제", sorted(df["topic"].dropna().unique()))
         sources = st.multiselect("소스", sorted(df["source"].unique()))
         statuses = st.multiselect(
             "상태", sorted(df["status"].unique()), format_func=lambda s: STATUS_LABEL.get(s, s)
@@ -114,6 +131,8 @@ with tab_feed:
         sort_key = st.radio("정렬", ["점수순", "최신순"], horizontal=True)
 
     view = df.copy()
+    if topics:
+        view = view[view["topic"].isin(topics)]
     if sources:
         view = view[view["source"].isin(sources)]
     if statuses:

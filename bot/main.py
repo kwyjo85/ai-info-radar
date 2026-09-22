@@ -2,15 +2,21 @@
 
 - 매일 08:00 상위 항목 브리핑 자동 전송
 - /brief : 즉시 브리핑
+- "주제 설정 : <문장>" 또는 /topic <문장> : 수집 주제 변경 (다음 변경까지 유지)
+- "주제 확인" 또는 /topic : 현재 주제 보기
 - 항목별 인라인 버튼: [블루프린트 보기] [구현 진행] [스킵]
   - 구현 진행 → 블루프린트를 tasks/pending/ 으로 복사 (Claude Code 작업 지시용)
 
 실행: uv run python -m bot.main
 """
 
+import asyncio
 import datetime as dt
 import logging
+import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,9 +30,16 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from collectors import storage
+from pipeline import topic
+
+CYCLE_LAUNCHD_LABEL = "com.ai-info-radar.cycle"
+TOPIC_SET_RE = re.compile(r"^\s*주제\s*(?:설정|변경)\s*[:：]\s*(.+)$", re.S)
+TOPIC_SHOW_RE = re.compile(r"^\s*주제\s*(?:확인)?\s*$")
 
 LOG_DIR = ROOT / "logs"
 TASKS_PENDING = ROOT / "tasks" / "pending"
@@ -61,18 +74,21 @@ def _format_item(row) -> str:
 
 async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
     conn = storage.connect()
+    current_topic = topic.topic_text(conn)
+    # 다른 주제로 채점된 항목은 브리핑에서 제외 (대시보드에서는 볼 수 있음)
     rows = conn.execute(
         """SELECT id, title, url, score, kind, category, summary FROM items
-           WHERE status='processed' ORDER BY score DESC LIMIT ?""",
-        (BRIEF_TOP_N,),
+           WHERE status='processed' AND topic=? ORDER BY score DESC LIMIT ?""",
+        (current_topic, BRIEF_TOP_N),
     ).fetchall()
     if not rows:
-        await context.bot.send_message(CHAT_ID, "오늘 브리핑할 새 항목이 없습니다.")
+        await context.bot.send_message(CHAT_ID, f"오늘 브리핑할 새 항목이 없습니다.\n주제: {current_topic}")
         conn.close()
         return
 
     await context.bot.send_message(
-        CHAT_ID, f"AI 레이더 브리핑 — 상위 {len(rows)}건 ({dt.date.today():%m/%d})"
+        CHAT_ID,
+        f"AI 레이더 브리핑 — 상위 {len(rows)}건 ({dt.date.today():%m/%d})\n주제: {current_topic}",
     )
     for row in rows:
         await context.bot.send_message(
@@ -89,8 +105,59 @@ async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "AI Info Radar 봇입니다.\n/brief — 지금 브리핑 받기"
+        "AI Info Radar 봇입니다.\n"
+        "/brief — 지금 브리핑 받기\n"
+        "주제 설정 : <문장> — 수집 주제 변경 (다음 변경까지 유지)\n"
+        "주제 확인 — 현재 주제 보기"
     )
+
+
+def _kickstart_cycle() -> bool:
+    """주제 변경 즉시 수집·처리 사이클을 한 번 돌림 (launchd 미설치 환경이면 False)."""
+    try:
+        r = subprocess.run(
+            ["launchctl", "kickstart", f"gui/{os.getuid()}/{CYCLE_LAUNCHD_LABEL}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+async def _apply_topic(update: Update, text: str) -> None:
+    if update.effective_chat.id != CHAT_ID:
+        return
+    await update.message.reply_text(f"주제를 분석해 검색어를 만들고 있습니다…\n「{text.strip()}」")
+    try:
+        data = await asyncio.to_thread(topic.set_topic, text)
+    except Exception as e:
+        log.exception("주제 설정 실패")
+        await update.message.reply_text(f"주제 설정에 실패했습니다: {type(e).__name__}: {e}")
+        return
+
+    kicked = _kickstart_cycle()
+    tail = (
+        "새 주제로 수집·처리를 시작했습니다 (수 분 소요). /brief 로 확인하세요."
+        if kicked else
+        "다음 30분 사이클부터 새 주제로 수집됩니다."
+    )
+    await update.message.reply_text("주제를 설정했습니다.\n\n" + topic.format_topic(data) + "\n\n" + tail)
+
+
+async def cmd_topic(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = " ".join(context.args) if context.args else ""
+    if text:
+        await _apply_topic(update, text)
+    else:
+        await update.message.reply_text(topic.format_topic(topic.get_topic()))
+
+
+async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text or ""
+    if m := TOPIC_SET_RE.match(text):
+        await _apply_topic(update, m.group(1))
+    elif TOPIC_SHOW_RE.match(text):
+        await update.message.reply_text(topic.format_topic(topic.get_topic()))
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -148,6 +215,8 @@ def main():
     app = Application.builder().token(_ENV["TELEGRAM_BOT_TOKEN"]).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("brief", cmd_brief))
+    app.add_handler(CommandHandler("topic", cmd_topic))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.job_queue.run_daily(send_briefing, time=dt.time(hour=BRIEF_HOUR, minute=0))
 
