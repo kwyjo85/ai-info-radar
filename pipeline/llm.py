@@ -33,6 +33,11 @@ def _claude_bin() -> str:
 
 
 def _complete_cli(prompt: str, model: str) -> str:
+    env = dict(os.environ)
+    # launchd 등 비로그인 환경용: `claude setup-token`으로 발급한 장기 토큰 주입
+    oauth_token = _ENV.get("CLAUDE_CODE_OAUTH_TOKEN")
+    if oauth_token and not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
     r = subprocess.run(
         [_claude_bin(), "-p", "--model", model, "--output-format", "text"],
         input=prompt,
@@ -40,6 +45,7 @@ def _complete_cli(prompt: str, model: str) -> str:
         text=True,
         timeout=600,
         cwd=str(ROOT),
+        env=env,
     )
     if r.returncode != 0:
         raise RuntimeError(f"claude CLI 실패 (exit {r.returncode}): {r.stderr[:500]}")
