@@ -1,0 +1,18 @@
+[project]
+name = "ai-info-radar"
+version = "0.1.0"
+description = "AI 업무 자동화 정보 수집·분류·브리핑 시스템"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "anthropic>=0.40",
+    "pyyaml>=6.0",
+    "python-telegram-bot>=21.0",
+    "streamlit>=1.38",
+    "feedparser>=6.0",
+    "youtube-transcript-api>=0.6",
+]
+
+[tool.uv]
+package = false

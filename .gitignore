@@ -1,0 +1,10 @@
+.env
+data/
+logs/
+.venv/
+__pycache__/
+*.pyc
+localhost.pem
+localhost-key.pem
+*.pem
+.DS_Store

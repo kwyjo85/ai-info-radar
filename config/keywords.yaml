@@ -1,0 +1,29 @@
+# Threads keyword_search용 검색 키워드 (한글/영문)
+keywords:
+  # 한글
+  - AI 자동화
+  - 업무 자동화
+  - AI 에이전트
+  - 클로드 코드
+  - 노코드 자동화
+  - 업무 효율화 AI
+  - GPT 활용
+  - AI 워크플로우
+  - 반복업무 자동화
+  - 프롬프트 엔지니어링
+  # 영문
+  - Claude Code
+  - AI automation
+  - workflow automation
+  - AI agent workflow
+  - n8n
+  - Make automation
+  - Zapier AI
+  - MCP server
+  - Model Context Protocol
+  - Cursor AI
+  - AI productivity
+  - LLM automation
+  - agentic workflow
+  - browser automation AI
+  - AI assistant workflow
