@@ -26,21 +26,37 @@ MAX_BLUEPRINTS_PER_RUN = 5
 
 CATEGORIES = ["업무자동화", "AI에이전트", "개발도구", "노코드", "LLM활용", "기타"]
 
+NEWS_SCORE_CAP = 60       # kind='뉴스' 항목의 점수 상한 (블루프린트 생성 제외)
+
 SCORE_PROMPT = """당신은 "AI 기반 업무 효율화·자동화" 정보 큐레이터입니다.
-아래 수집 항목들을 평가하세요. 평가 기준:
-- 개인/소규모 팀이 실제로 구현·도입할 수 있는 AI 자동화 아이디어·도구·워크플로우인가 (높은 점수)
-- 단순 뉴스, 의견, 홍보, 관련 없는 내용 (낮은 점수)
+아래 수집 항목들을 두 축으로 평가하세요.
+
+1) relevance (0~100): AI 기반 업무 효율화·자동화 주제와의 관련도
+2) actionability (0~100): 개인/소규모 팀이 "직접 구현·구축할 수 있는" 정도
+   - 높음: 구체적 기법, 오픈소스 도구, 워크플로우 설계, 코드/설정 예시, 재현 가능한 사례
+   - 낮음: 제품 출시 소식, 기능 업데이트 안내, 인용/의견/감상, 홍보, 랜딩페이지만 있는 소개
+3) kind: "구현" (기법/도구/워크플로우 — 만들 것이 있음) 또는 "뉴스" (소식/의견/홍보 — 읽고 참고만 함)
+   판단 기준: "이 글을 보고 내 맥북에서 코드를 짜거나 설정을 구성할 것이 있는가?" 없으면 뉴스.
 
 각 항목에 대해:
-- score: 0~100 관련도 점수
+- relevance, actionability: 위 정의대로 정수
+- kind: "구현" | "뉴스"
 - category: {categories} 중 하나
 - summary: 한국어 3줄 요약 (줄바꿈 \\n 구분)
 
 반드시 아래 형식의 JSON 배열만 출력하세요. 다른 텍스트 금지.
-[{{"id": 1, "score": 85, "category": "업무자동화", "summary": "..."}}]
+[{{"id": 1, "relevance": 85, "actionability": 70, "kind": "구현", "category": "업무자동화", "summary": "..."}}]
 
 수집 항목:
 {items}"""
+
+
+def final_score(relevance: int, actionability: int, kind: str) -> int:
+    """관련도 40% + 실행가능성 60%. 뉴스류는 상한을 둬 블루프린트 임계치(70)를 넘지 못하게 함."""
+    score = round(0.4 * relevance + 0.6 * actionability)
+    if kind == "뉴스":
+        score = min(score, NEWS_SCORE_CAP)
+    return max(0, min(100, score))
 
 BLUEPRINT_PROMPT = """당신은 AI 자동화 구현 컨설턴트입니다. 아래 정보 항목을 개인 MacBook 환경에서
 실제로 구현하기 위한 블루프린트를 한국어 마크다운으로 작성하세요.
@@ -120,11 +136,13 @@ def score_items(conn, log) -> int:
         for res in results:
             if res.get("id") not in valid_ids:
                 continue
+            kind = res.get("kind") if res.get("kind") in ("구현", "뉴스") else "뉴스"
             conn.execute(
-                """UPDATE items SET score=?, category=?, summary=?, processed_at=?, status='processed'
+                """UPDATE items SET score=?, kind=?, category=?, summary=?, processed_at=?, status='processed'
                    WHERE id=?""",
                 (
-                    max(0, min(100, int(res.get("score", 0)))),
+                    final_score(int(res.get("relevance", 0)), int(res.get("actionability", 0)), kind),
+                    kind,
                     res.get("category", "기타"),
                     res.get("summary", ""),
                     now,
@@ -141,6 +159,7 @@ def generate_blueprints(conn, log) -> int:
     rows = conn.execute(
         """SELECT id, title, url, content, summary FROM items
            WHERE status='processed' AND score >= ? AND blueprint_path IS NULL
+             AND COALESCE(kind, '구현') = '구현'
            ORDER BY score DESC LIMIT ?""",
         (BLUEPRINT_THRESHOLD, MAX_BLUEPRINTS_PER_RUN),
     ).fetchall()

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS items (
     collected_at  TEXT NOT NULL,
     -- 3단계 처리기에서 채움
     score         INTEGER,
+    kind          TEXT,                     -- 구현 (기법/도구/워크플로우) | 뉴스 (출시소식/의견/홍보)
     category      TEXT,
     summary       TEXT,
     blueprint_path TEXT,
@@ -37,7 +38,17 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """기존 DB에 새 컬럼 추가 (CREATE TABLE IF NOT EXISTS는 기존 테이블을 바꾸지 않음)."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    for col, ddl in {"kind": "TEXT"}.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {col} {ddl}")
+    conn.commit()
 
 
 def upsert_items(conn: sqlite3.Connection, items: list[dict]) -> int:

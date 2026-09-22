@@ -33,7 +33,7 @@ st.set_page_config(page_title="AI Info Radar", layout="wide")
 def load_items() -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql_query(
-            "SELECT id, score, category, status, source, title, summary, content, url, "
+            "SELECT id, score, kind, category, status, source, title, summary, content, url, "
             "blueprint_path, published_at, collected_at FROM items",
             conn,
         )
@@ -59,6 +59,7 @@ def render_card(row) -> None:
             )
 
         meta = " · ".join(filter(None, [
+            {"구현": "🛠 구현", "뉴스": "📰 뉴스"}.get(row.kind),
             row.category,
             row.source,
             STATUS_LABEL.get(row.status, row.status),

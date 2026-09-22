@@ -50,8 +50,9 @@ def _buttons(item_id: int) -> InlineKeyboardMarkup:
 
 
 def _format_item(row) -> str:
+    tag = "📰 뉴스" if row["kind"] == "뉴스" else "🛠 구현"
     lines = [
-        f"[{row['score']}점 · {row['category']}] {row['title'] or '(제목 없음)'}",
+        f"[{row['score']}점 · {tag} · {row['category']}] {row['title'] or '(제목 없음)'}",
         row["summary"] or "",
         row["url"],
     ]
@@ -61,7 +62,7 @@ def _format_item(row) -> str:
 async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
     conn = storage.connect()
     rows = conn.execute(
-        """SELECT id, title, url, score, category, summary FROM items
+        """SELECT id, title, url, score, kind, category, summary FROM items
            WHERE status='processed' ORDER BY score DESC LIMIT ?""",
         (BRIEF_TOP_N,),
     ).fetchall()
