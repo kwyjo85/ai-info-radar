@@ -1,0 +1,12 @@
+# RSS 피드 목록 (자유롭게 추가/삭제)
+rss:
+  - https://simonwillison.net/atom/everything/
+  - https://hnrss.org/newest?q=AI+automation
+  - https://hnrss.org/newest?q=Claude+Code
+  - https://hnrss.org/newest?q=MCP+server
+
+# YouTube 채널 ID 목록 (channel_id, 자막 기반 수집)
+# 채널 ID 찾는 법: 채널 페이지 소스에서 "channelId" 검색, 또는
+# https://www.youtube.com/@핸들 → 더보기 → 채널 공유 → 채널 ID 복사
+youtube_channels: []
+#  - UCxxxxxxxxxxxxxxxxxxxxxx  # 예시
