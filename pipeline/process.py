@@ -84,10 +84,12 @@ BLUEPRINT_PROMPT = """당신은 AI 자동화 구현 컨설턴트입니다. 아�
 
 def setup_logging():
     LOG_DIR.mkdir(exist_ok=True)
+    # scripts.cycle이 수집→처리를 한 프로세스에서 돌리므로 collect.log 핸들러를 교체해야 함
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_DIR / "process.log")],
+        force=True,
     )
 
 
