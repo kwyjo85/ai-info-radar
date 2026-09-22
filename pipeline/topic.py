@@ -28,9 +28,13 @@ EXPAND_PROMPT = """사용자가 정보 수집 주제를 다음과 같이 설정�
 - keywords_ko: 한국어 검색어 6~8개 (2~4단어, Threads/YouTube 검색용)
 - keywords_en: 영어 검색어 6~8개 (2~4단어)
 - hn_queries: Hacker News 검색용 짧은 영어 질의 3~4개 (1~3단어, 결과가 나올 만큼 넓게)
+- unknown_terms: 주제에 포함된 단어 중 무엇을 가리키는지 확실히 알지 못하는 고유명사/약어 목록
+  (있으면 그 단어는 검색어에 그대로 쓰고, 뜻을 추측해 변형하지 마세요. 없으면 빈 배열)
 
 반드시 아래 형식의 JSON 객체만 출력하세요. 다른 텍스트 금지.
-{{"keywords_ko": ["..."], "keywords_en": ["..."], "hn_queries": ["..."]}}"""
+{{"keywords_ko": ["..."], "keywords_en": ["..."], "hn_queries": ["..."], "unknown_terms": []}}"""
+
+REQUEUE_DAYS = 14  # 주제 변경 시 최근 N일 항목을 새 주제로 재평가
 
 
 def _parse_json_object(text: str) -> dict:
@@ -63,11 +67,22 @@ def set_topic(text: str) -> dict:
         "keywords_ko": [k for k in expanded.get("keywords_ko", []) if k][:8],
         "keywords_en": [k for k in expanded.get("keywords_en", []) if k][:8],
         "hn_queries": [q for q in expanded.get("hn_queries", []) if q][:4],
+        "unknown_terms": [t for t in expanded.get("unknown_terms", []) if t],
         "set_at": datetime.now().isoformat(timespec="seconds"),
     }
     conn = storage.connect()
     try:
         storage.set_setting(conn, SETTING_KEY, json.dumps(data, ensure_ascii=False))
+        # 이미 채점된 최근 항목을 새 주제 기준으로 다시 평가하도록 되돌림.
+        # 승인/스킵한 항목은 사용자 결정이므로 유지.
+        cur = conn.execute(
+            """UPDATE items SET status='new'
+               WHERE status IN ('processed', 'briefed')
+                 AND collected_at >= datetime('now', 'localtime', ?)""",
+            (f"-{REQUEUE_DAYS} days",),
+        )
+        conn.commit()
+        data["requeued"] = cur.rowcount
     finally:
         conn.close()
     return data
@@ -107,10 +122,17 @@ def hn_queries(conn=None) -> list[str]:
 def format_topic(t: dict | None) -> str:
     if not t:
         return f"현재 주제: (기본) {DEFAULT_TOPIC}\nconfig/keywords.yaml · feeds.yaml 기본 검색어 사용 중"
-    return (
+    text = (
         f"현재 주제: {t['topic']}\n"
         f"설정 시각: {t['set_at'][:16].replace('T', ' ')}\n"
         f"검색어(한): {', '.join(t['keywords_ko'])}\n"
         f"검색어(영): {', '.join(t['keywords_en'])}\n"
         f"HN 검색: {', '.join(t['hn_queries'])}"
     )
+    if t.get("unknown_terms"):
+        text += (
+            f"\n\n⚠️ '{', '.join(t['unknown_terms'])}'이(가) 무엇인지 확실하지 않아 검색어가 부정확할 수 있습니다. "
+            "정확한 이름이나 설명을 붙여 다시 설정해 주세요.\n"
+            "예) 주제 설정 : jev-router(Claude Code 모델 라우터)를 활용한 비용 절감"
+        )
+    return text

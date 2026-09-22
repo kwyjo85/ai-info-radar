@@ -40,8 +40,12 @@ def collect() -> list[dict]:
     items = []
     for feed_url, keyword in load_feeds():
         parsed = feedparser.parse(feed_url)
-        if parsed.bozo and not parsed.entries:
-            log.warning("rss: 파싱 실패 %s (%s)", feed_url, parsed.bozo_exception)
+        if not parsed.entries:
+            # hnrss는 결과 0건일 때 빈 채널을 반환하는데 feedparser가 bozo로 표시함 — 정상 상황
+            if parsed.get("status") == 200:
+                log.info("rss: 결과 없음 %s", keyword or feed_url)
+            else:
+                log.warning("rss: 파싱 실패 %s (%s)", feed_url, parsed.get("bozo_exception"))
             continue
         for entry in parsed.entries:
             link = entry.get("link")

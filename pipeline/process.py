@@ -20,7 +20,7 @@ BLUEPRINT_DIR = ROOT / "blueprints"
 LOG_DIR = ROOT / "logs"
 
 SCORE_BATCH = 10          # 점수 매기기 한 번에 묶는 항목 수
-MAX_ITEMS_PER_RUN = 30    # 한 실행당 처리 상한 (구독 사용량 보호)
+MAX_ITEMS_PER_RUN = 60    # 한 실행당 처리 상한 (구독 사용량 보호; 주제 변경 시 재평가 물량 고려)
 BLUEPRINT_THRESHOLD = 70
 MAX_BLUEPRINTS_PER_RUN = 5
 
@@ -167,9 +167,9 @@ def generate_blueprints(conn, log) -> int:
     rows = conn.execute(
         """SELECT id, title, url, content, summary FROM items
            WHERE status='processed' AND score >= ? AND blueprint_path IS NULL
-             AND COALESCE(kind, '구현') = '구현'
+             AND COALESCE(kind, '구현') = '구현' AND topic = ?
            ORDER BY score DESC LIMIT ?""",
-        (BLUEPRINT_THRESHOLD, MAX_BLUEPRINTS_PER_RUN),
+        (BLUEPRINT_THRESHOLD, topic.topic_text(conn), MAX_BLUEPRINTS_PER_RUN),
     ).fetchall()
     if not rows:
         return 0

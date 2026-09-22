@@ -136,10 +136,12 @@ async def _apply_topic(update: Update, text: str) -> None:
         return
 
     kicked = _kickstart_cycle()
+    requeued = data.get("requeued", 0)
     tail = (
-        "새 주제로 수집·처리를 시작했습니다 (수 분 소요). /brief 로 확인하세요."
+        f"새 주제로 수집을 시작하고, 기존 항목 {requeued}건을 새 주제 기준으로 다시 평가합니다 "
+        "(5~10분 소요). 끝나면 /brief 로 확인하세요."
         if kicked else
-        "다음 30분 사이클부터 새 주제로 수집됩니다."
+        f"다음 30분 사이클부터 새 주제로 수집·재평가({requeued}건)됩니다."
     )
     await update.message.reply_text("주제를 설정했습니다.\n\n" + topic.format_topic(data) + "\n\n" + tail)
 
