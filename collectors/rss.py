@@ -61,7 +61,10 @@ def collect() -> list[dict]:
             if parsed.get("status") == 200:
                 log.info("rss: 결과 없음 %s", keyword or feed_url)
             else:
-                log.warning("rss: 파싱 실패 %s (%s)", feed_url, parsed.get("bozo_exception"))
+                log.warning(
+                    "rss: 파싱 실패 %s (HTTP %s, %s)",
+                    feed_url, parsed.get("status"), parsed.get("bozo_exception"),
+                )
             continue
         entries = parsed.entries if keyword is None else parsed.entries[:MAX_ENTRIES_PER_FEED]
         for entry in entries:
