@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS items (
     url           TEXT NOT NULL UNIQUE,     -- permalink 기준 중복 제거
     author        TEXT,
     title         TEXT,
+    title_ko      TEXT,                     -- 한국어 제목 (채점 시 생성)
     content       TEXT,
     keyword       TEXT,                     -- 매칭된 검색 키워드
     published_at  TEXT,
@@ -56,7 +57,7 @@ def connect() -> sqlite3.Connection:
 def _migrate(conn: sqlite3.Connection) -> None:
     """기존 DB에 새 컬럼 추가 (CREATE TABLE IF NOT EXISTS는 기존 테이블을 바꾸지 않음)."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
-    for col, ddl in {"kind": "TEXT", "topic": "TEXT", "easy": "TEXT", "use_cases": "TEXT"}.items():
+    for col, ddl in {"kind": "TEXT", "topic": "TEXT", "easy": "TEXT", "use_cases": "TEXT", "title_ko": "TEXT"}.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE items ADD COLUMN {col} {ddl}")
     # 주제 기능 도입 전에 채점된 항목은 기본 주제로 간주 (브리핑 필터에서 빠지지 않게)

@@ -32,6 +32,7 @@
   .card.dim { opacity:.55; }
   .card .top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
   .card h3 { margin:0; font-size:15px; line-height:1.4; }
+  .card h3 .orig { font-size:11px; color:var(--muted); font-weight:400; margin-top:2px; }
   .score { font-size:20px; font-weight:800; white-space:nowrap; }
   .score.hi { color:var(--green); } .score.mid { color:var(--amber); } .score.lo { color:var(--red); }
   .tags { display:flex; flex-wrap:wrap; gap:5px; }
@@ -160,7 +161,7 @@
     $('easyMode').onchange = () => { easy = $('easyMode').checked; localStorage.setItem(EASY_KEY, easy ? '1' : '0'); render(); };
     const scoreCls = s => s == null ? '' : s >= 70 ? 'hi' : s >= 40 ? 'mid' : 'lo';
     const card = i => `<div class="card ${i.status === 'skipped' ? 'dim' : ''}">
-      <div class="top"><h3>${esc(i.title || '(제목 없음)')}</h3><span class="score ${scoreCls(i.score)}">${i.score ?? '–'}</span></div>
+      <div class="top"><h3>${esc(i.title || '(제목 없음)')}${i.title_orig && i.title_orig !== i.title ? `<div class="orig">${esc(i.title_orig)}</div>` : ''}</h3><span class="score ${scoreCls(i.score)}">${i.score ?? '–'}</span></div>
       <div class="tags">${i.kind ? `<span class="tag kind-${i.kind}">${i.kind === '구현' ? '🛠 구현' : '📰 뉴스'}</span>` : ''}<span class="tag src">${esc(i.source)}</span>${i.category ? `<span class="tag">${esc(i.category)}</span>` : ''}<span class="tag">${STATUS[i.status] || esc(i.status)}</span>${i.blueprint ? '<span class="tag bp">📋 블루프린트</span>' : ''}</div>
       ${easy ? (i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : (i.summary ? `<div class="summary">${esc(i.summary)}</div><div class="noeasy">쉬운 설명은 다음 처리 때 생성됩니다</div>` : '')) : (i.summary ? `<div class="summary">${esc(i.summary)}</div>` : '')}
       ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}

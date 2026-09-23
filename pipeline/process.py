@@ -43,6 +43,7 @@ SCORE_PROMPT = """당신은 정보 큐레이터입니다. 사용자가 현재 �
 각 항목에 대해:
 - relevance, actionability: 위 정의대로 정수
 - kind: "구현" | "뉴스"
+- title_ko: 한국어 제목 (원제가 영어면 자연스럽게 번역, 한국어면 다듬기; 40자 이내, 제품명·고유명사는 원문 유지)
 - category: {categories} 중 하나
 - summary: 한국어 3줄 요약 (줄바꿈 \\n 구분)
 - easy: 전문용어 없이 처음 듣는 사람도 이해할 수 있게 "이게 뭔지"를 1~2문장으로. 비유를 써도 좋음.
@@ -51,7 +52,7 @@ SCORE_PROMPT = """당신은 정보 큐레이터입니다. 사용자가 현재 �
   (예: "매일 아침 받은 메일을 중요도별로 정리해 텔레그램으로 받기")
 
 반드시 아래 형식의 JSON 배열만 출력하세요. 다른 텍스트 금지.
-[{{"id": 1, "relevance": 85, "actionability": 70, "kind": "구현", "category": "업무자동화", "summary": "...", "easy": "...", "use_cases": "...\\n..."}}]
+[{{"id": 1, "relevance": 85, "actionability": 70, "kind": "구현", "title_ko": "...", "category": "업무자동화", "summary": "...", "easy": "...", "use_cases": "...\\n..."}}]
 
 수집 항목:
 {items}"""
@@ -152,7 +153,7 @@ def score_items(conn, log) -> int:
             kind = res.get("kind") if res.get("kind") in ("구현", "뉴스") else "뉴스"
             # 점수는 채점 시점의 주제 기준이므로 topic도 그 시점 값으로 덮어씀
             conn.execute(
-                """UPDATE items SET score=?, kind=?, category=?, summary=?, easy=?, use_cases=?,
+                """UPDATE items SET score=?, kind=?, category=?, summary=?, easy=?, use_cases=?, title_ko=?,
                                     processed_at=?, topic=?, status='processed'
                    WHERE id=?""",
                 (
@@ -162,6 +163,7 @@ def score_items(conn, log) -> int:
                     res.get("summary", ""),
                     res.get("easy") or None,
                     "\n".join(res["use_cases"]) if isinstance(res.get("use_cases"), list) else (res.get("use_cases") or None),
+                    (res.get("title_ko") or "").strip()[:80] or None,
                     now,
                     current_topic,
                     res["id"],
@@ -175,7 +177,7 @@ def score_items(conn, log) -> int:
 
 def generate_blueprints(conn, log) -> int:
     rows = conn.execute(
-        """SELECT id, title, url, content, summary FROM items
+        """SELECT id, COALESCE(title_ko, title) AS title, url, content, summary FROM items
            WHERE status='processed' AND score >= ? AND blueprint_path IS NULL
              AND COALESCE(kind, '구현') = '구현' AND topic = ?
            ORDER BY score DESC LIMIT ?""",

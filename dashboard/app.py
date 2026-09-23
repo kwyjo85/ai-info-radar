@@ -34,7 +34,7 @@ st.set_page_config(page_title="AI Info Radar", layout="wide")
 def load_items() -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql_query(
-            "SELECT id, score, kind, category, status, source, title, summary, easy, use_cases, content, url, "
+            "SELECT id, score, kind, category, status, source, COALESCE(title_ko, title) AS title, summary, easy, use_cases, content, url, "
             "blueprint_path, published_at, collected_at, topic FROM items",
             conn,
         )
