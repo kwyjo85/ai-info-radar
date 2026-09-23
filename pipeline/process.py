@@ -115,7 +115,8 @@ def slugify(text: str, max_len: int = 50) -> str:
 
 def score_items(conn, log) -> int:
     rows = conn.execute(
-        "SELECT id, source, title, content FROM items WHERE status = 'new' ORDER BY id LIMIT ?",
+        """SELECT id, source, title, content FROM items WHERE status IN ('new', 'rescore')
+           ORDER BY status = 'rescore', id LIMIT ?""",  # 신규 항목 먼저, 재평가는 남는 여유분으로
         (MAX_ITEMS_PER_RUN,),
     ).fetchall()
     if not rows:
@@ -154,7 +155,8 @@ def score_items(conn, log) -> int:
             # 점수는 채점 시점의 주제 기준이므로 topic도 그 시점 값으로 덮어씀
             conn.execute(
                 """UPDATE items SET score=?, kind=?, category=?, summary=?, easy=?, use_cases=?, title_ko=?,
-                                    processed_at=?, topic=?, status='processed'
+                                    processed_at=?, topic=?,
+                                    status=CASE WHEN status='rescore' THEN 'briefed' ELSE 'processed' END
                    WHERE id=?""",
                 (
                     final_score(int(res.get("relevance", 0)), int(res.get("actionability", 0)), kind),
@@ -216,7 +218,7 @@ def main():
     scored = score_items(conn, log)
     made = generate_blueprints(conn, log)
 
-    remaining = conn.execute("SELECT COUNT(*) FROM items WHERE status='new'").fetchone()[0]
+    remaining = conn.execute("SELECT COUNT(*) FROM items WHERE status IN ('new', 'rescore')").fetchone()[0]
     log.info("완료: 점수 %d건, 블루프린트 %d건, 미처리 잔여 %d건", scored, made, remaining)
     conn.close()
 

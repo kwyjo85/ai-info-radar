@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS items (
     use_cases     TEXT,                     -- '이걸로 할 수 있는 것' 예시 (줄바꿈 구분)
     blueprint_path TEXT,
     processed_at  TEXT,
-    status        TEXT NOT NULL DEFAULT 'new'  -- new | processed | briefed | approved | skipped
+    status        TEXT NOT NULL DEFAULT 'new'  -- new | rescore | processed | briefed | approved | skipped
 );
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
 CREATE INDEX IF NOT EXISTS idx_items_score ON items(score);
@@ -64,6 +64,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute(
         "UPDATE items SET topic=? WHERE topic IS NULL AND status != 'new'", (DEFAULT_TOPIC,)
     )
+    # 한국어 제목·쉬운 설명 도입 전에 채점된 항목을 1회만 재평가 대기열로 되돌림.
+    # 이미 브리핑된 항목은 'rescore'로 두어 재평가 후에도 briefed로 복귀(브리핑 재전송 방지).
+    # 플래그로 1회만 실행 — LLM이 title_ko를 빠뜨린 항목이 매 사이클 재채점되는 루프 방지.
+    if not conn.execute("SELECT 1 FROM settings WHERE key='migrated_title_ko_rescore'").fetchone():
+        conn.execute(
+            "UPDATE items SET status='new' WHERE status='processed' AND (title_ko IS NULL OR easy IS NULL)"
+        )
+        conn.execute(
+            "UPDATE items SET status='rescore' WHERE status='briefed' AND (title_ko IS NULL OR easy IS NULL)"
+        )
+        set_setting(conn, "migrated_title_ko_rescore", "1")
     conn.commit()
 
 

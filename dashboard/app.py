@@ -21,6 +21,7 @@ PAGE_SIZE = 10
 
 STATUS_LABEL = {
     "new": "미처리",
+    "rescore": "재평가 대기",
     "processed": "처리됨",
     "briefed": "브리핑됨",
     "approved": "구현 승인",

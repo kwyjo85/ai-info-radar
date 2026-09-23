@@ -78,7 +78,7 @@ def set_topic(text: str) -> dict:
         # 승인/스킵한 항목은 사용자 결정이므로 유지.
         cur = conn.execute(
             """UPDATE items SET status='new'
-               WHERE status IN ('processed', 'briefed')
+               WHERE status IN ('processed', 'briefed', 'rescore')
                  AND collected_at >= datetime('now', 'localtime', ?)""",
             (f"-{REQUEUE_DAYS} days",),
         )
