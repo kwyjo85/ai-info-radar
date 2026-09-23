@@ -20,7 +20,7 @@ BLUEPRINT_DIR = ROOT / "blueprints"
 LOG_DIR = ROOT / "logs"
 
 SCORE_BATCH = 10          # 점수 매기기 한 번에 묶는 항목 수
-MAX_ITEMS_PER_RUN = 60    # 한 실행당 처리 상한 (구독 사용량 보호; 주제 변경 시 재평가 물량 고려)
+MAX_ITEMS_PER_RUN = 120   # 한 실행당 처리 상한 (구독 사용량 보호; 주제 변경 시 300건+ 재평가를 2~3사이클에 끝내기 위함)
 BLUEPRINT_THRESHOLD = 70
 MAX_BLUEPRINTS_PER_RUN = 5
 
