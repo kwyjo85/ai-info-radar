@@ -1,4 +1,4 @@
-"""30분 주기 사이클: 수집 → 처리 → 대시보드 배포. launchd에서 호출됨.
+"""30분 주기 사이클: 수집 → 처리 → 대시보드 배포 → git 동기화. launchd에서 호출됨.
 
 실행: uv run python -m scripts.cycle
 """
@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from collectors.run import main as collect_main
 from pipeline.process import main as process_main
+from scripts.git_sync import sync as git_sync
 from scripts.publish_dashboard import publish as publish_dashboard
 
 
@@ -23,6 +24,10 @@ def main():
         publish_dashboard()
     except Exception as e:
         print(f"[publish] 대시보드 배포 실패: {e}", flush=True)
+    try:
+        git_sync()
+    except Exception as e:
+        print(f"[git-sync] 동기화 실패: {e}", flush=True)
     print(f"=== cycle end {datetime.now():%Y-%m-%d %H:%M:%S} ===", flush=True)
 
 
