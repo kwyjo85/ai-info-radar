@@ -119,7 +119,7 @@
   document.getElementById('lock').onclick = () => { localStorage.removeItem(PW_KEY); location.reload(); };
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const STATUS = { new:'미처리', processed:'처리됨', briefed:'브리핑됨', approved:'구현 승인', skipped:'스킵' };
+  const STATUS = { new:'미처리', rescore:'재평가 대기', processed:'처리됨', briefed:'브리핑됨', approved:'구현 승인', skipped:'스킵' };
   const PAGE = 30;
 
   function boot() {
