@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from collectors import rss, storage, threads, youtube
+from collectors import ig_dashboard, rss, storage, threads, youtube
 from pipeline import topic
 from scripts.threads_auth import refresh_if_needed
 
@@ -45,7 +45,7 @@ def main():
     log.info("현재 주제: %s", current_topic)
 
     total_new = 0
-    for collector in (threads, rss, youtube):
+    for collector in (threads, rss, youtube, ig_dashboard):
         name = collector.__name__.rsplit(".", 1)[-1]
         try:
             items = collector.collect()
