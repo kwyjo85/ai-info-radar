@@ -44,9 +44,11 @@ TOPIC_SHOW_RE = re.compile(r"^\s*주제\s*(?:확인)?\s*$")
 LOG_DIR = ROOT / "logs"
 TASKS_PENDING = ROOT / "tasks" / "pending"
 
-BRIEF_HOUR = 8       # 매일 브리핑 시각
+BRIEF_HOUR = 8       # 매일 브리핑 시각 (이 시각 이후 맥이 깨어 있는 첫 시점에 전송)
 BRIEF_TOP_N = 5      # 브리핑 항목 수
+BRIEF_CHECK_INTERVAL = 300  # 브리핑 전송 여부 점검 주기(초)
 MSG_LIMIT = 4000     # 텔레그램 메시지 길이 제한 (4096) 여유분
+LAST_BRIEF_KEY = "last_briefing_date"
 
 _ENV = dotenv_values(ROOT / ".env")
 CHAT_ID = int(_ENV["TELEGRAM_CHAT_ID"])
@@ -96,7 +98,27 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         conn.execute("UPDATE items SET status='briefed' WHERE id=?", (row["id"],))
     conn.commit()
+    storage.set_setting(conn, LAST_BRIEF_KEY, dt.date.today().isoformat())
     conn.close()
+
+
+async def daily_briefing_check(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """BRIEF_HOUR 이후 오늘 브리핑이 아직 안 나갔으면 전송.
+
+    run_daily 대신 주기 점검을 쓰는 이유: 맥이 08:00에 잠들어 있으면 스케줄러가 그 시각을
+    놓치고(그리고 asyncio 타이머는 슬립 시간만큼 밀림), 깨어난 뒤에도 브리핑이 오지 않기 때문.
+    """
+    now = dt.datetime.now()
+    if now.hour < BRIEF_HOUR:
+        return
+    conn = storage.connect()
+    last = storage.get_setting(conn, LAST_BRIEF_KEY)
+    conn.close()
+    today = now.date().isoformat()
+    if last == today:
+        return
+    log.info("일일 브리핑 전송 (예정 %02d:00, 실제 %s)", BRIEF_HOUR, now.strftime("%H:%M"))
+    await send_briefing(context)
 
 
 async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -220,9 +242,9 @@ def main():
     app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
-    app.job_queue.run_daily(send_briefing, time=dt.time(hour=BRIEF_HOUR, minute=0))
+    app.job_queue.run_repeating(daily_briefing_check, interval=BRIEF_CHECK_INTERVAL, first=10)
 
-    log.info("봇 시작 (롱폴링, 매일 %02d:00 브리핑)", BRIEF_HOUR)
+    log.info("봇 시작 (롱폴링, 매일 %02d:00 이후 첫 점검 시 브리핑)", BRIEF_HOUR)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
