@@ -66,9 +66,11 @@ def _buttons(item_id: int) -> InlineKeyboardMarkup:
 
 def _format_item(row) -> str:
     tag = "📰 뉴스" if row["kind"] == "뉴스" else "🛠 구현"
+    uses = (row["use_cases"] or "").split("\n")
     lines = [
         f"[{row['score']}점 · {tag} · {row['category']}] {row['title'] or '(제목 없음)'}",
-        row["summary"] or "",
+        f"💬 {row['easy']}" if row["easy"] else (row["summary"] or ""),
+        "💡 이걸로 할 수 있는 것:\n" + "\n".join(f"  • {u.strip()}" for u in uses if u.strip()) if row["use_cases"] else "",
         row["url"],
     ]
     return "\n".join(l for l in lines if l)
@@ -79,7 +81,7 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
     current_topic = topic.topic_text(conn)
     # 다른 주제로 채점된 항목은 브리핑에서 제외 (대시보드에서는 볼 수 있음)
     rows = conn.execute(
-        """SELECT id, title, url, score, kind, category, summary FROM items
+        """SELECT id, title, url, score, kind, category, summary, easy, use_cases FROM items
            WHERE status='processed' AND topic=? ORDER BY score DESC LIMIT ?""",
         (current_topic, BRIEF_TOP_N),
     ).fetchall()

@@ -38,6 +38,11 @@
   .tag { font-size:11px; padding:2px 8px; border-radius:999px; background:#222634; color:var(--muted); }
   .tag.kind-구현 { color:var(--green); } .tag.kind-뉴스 { color:var(--amber); } .tag.src { color:var(--accent); } .tag.bp { color:var(--purple); }
   .summary { font-size:13px; color:var(--text); line-height:1.6; white-space:pre-line; }
+  .easy { font-size:14px; line-height:1.65; background:#1d2333; border-left:3px solid var(--accent); padding:8px 10px; border-radius:6px; }
+  .uses { font-size:13px; line-height:1.6; }
+  .uses .h { color:var(--amber); font-weight:600; font-size:12px; margin-bottom:3px; }
+  .uses ul { margin:0; padding-left:18px; } .uses li { margin:2px 0; }
+  .noeasy { font-size:12px; color:var(--muted); font-style:italic; }
   .foot { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); gap:8px; flex-wrap:wrap; }
   .foot button { padding:5px 10px; font-size:12px; }
   .bp { margin-top:6px; border-top:1px solid var(--line); padding-top:10px; font-size:13px; line-height:1.65; }
@@ -59,7 +64,7 @@
 
 <header>
   <div><h1>AI Info Radar</h1><div class="meta" id="meta"></div></div>
-  <div style="display:flex;gap:8px"><button id="lock">잠금</button></div>
+  <div style="display:flex;gap:12px;align-items:center"><label style="font-size:13px;display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="easyMode"> 쉬운 설명 모드</label><button id="lock">잠금</button></div>
 </header>
 <main>
   <div class="metrics" id="metrics"></div>
@@ -149,11 +154,16 @@
         : (a, b) => (b.published_at || b.collected_at || '').localeCompare(a.published_at || a.collected_at || ''));
       return r;
     };
+    const EASY_KEY = 'radar-easy-mode';
+    let easy = localStorage.getItem(EASY_KEY) !== '0';   // 기본: 쉬운 설명 모드 켬
+    $('easyMode').checked = easy;
+    $('easyMode').onchange = () => { easy = $('easyMode').checked; localStorage.setItem(EASY_KEY, easy ? '1' : '0'); render(); };
     const scoreCls = s => s == null ? '' : s >= 70 ? 'hi' : s >= 40 ? 'mid' : 'lo';
     const card = i => `<div class="card ${i.status === 'skipped' ? 'dim' : ''}">
       <div class="top"><h3>${esc(i.title || '(제목 없음)')}</h3><span class="score ${scoreCls(i.score)}">${i.score ?? '–'}</span></div>
       <div class="tags">${i.kind ? `<span class="tag kind-${i.kind}">${i.kind === '구현' ? '🛠 구현' : '📰 뉴스'}</span>` : ''}<span class="tag src">${esc(i.source)}</span>${i.category ? `<span class="tag">${esc(i.category)}</span>` : ''}<span class="tag">${STATUS[i.status] || esc(i.status)}</span>${i.blueprint ? '<span class="tag bp">📋 블루프린트</span>' : ''}</div>
-      ${i.summary ? `<div class="summary">${esc(i.summary)}</div>` : ''}
+      ${easy ? (i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : (i.summary ? `<div class="summary">${esc(i.summary)}</div><div class="noeasy">쉬운 설명은 다음 처리 때 생성됩니다</div>` : '')) : (i.summary ? `<div class="summary">${esc(i.summary)}</div>` : '')}
+      ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
       <div class="foot"><span>${esc(i.author || '')} ${i.published_at ? '· ' + i.published_at.slice(0, 10) : ''}</span>
         <span><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a> ${i.blueprint ? `<button data-bp="${esc(i.blueprint)}">블루프린트</button>` : ''}</span></div>
       <div class="bp" style="display:none"></div></div>`;
@@ -179,6 +189,8 @@
     const withBp = items.filter(i => i.blueprint).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
     $('bps').innerHTML = withBp.length ? withBp.map(i => `<div class="card"><div class="top"><h3>${esc(i.title)}</h3><span class="score ${scoreCls(i.score)}">${i.score}</span></div>
       <div class="tags"><span class="tag src">${esc(i.source)}</span><span class="tag">${esc(i.topic || '').slice(0, 30)}</span><span class="tag">${esc(i.blueprint)}</span></div>
+      ${i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : ''}
+      ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
       <details><summary style="cursor:pointer;color:var(--accent);font-size:13px">내용 보기</summary><div class="bp">${marked.parse(bps[i.blueprint] || '')}</div></details>
       <div class="foot"><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a></div></div>`).join('') : '<div class="empty">블루프린트가 없습니다</div>';
     document.querySelectorAll('.tab').forEach(t => t.onclick = () => {

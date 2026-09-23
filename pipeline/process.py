@@ -45,9 +45,13 @@ SCORE_PROMPT = """당신은 정보 큐레이터입니다. 사용자가 현재 �
 - kind: "구현" | "뉴스"
 - category: {categories} 중 하나
 - summary: 한국어 3줄 요약 (줄바꿈 \\n 구분)
+- easy: 전문용어 없이 처음 듣는 사람도 이해할 수 있게 "이게 뭔지"를 1~2문장으로. 비유를 써도 좋음.
+  (예: "회의 녹음을 넣으면 알아서 회의록과 할 일 목록을 만들어주는 비서 같은 프로그램")
+- use_cases: "이걸로 내가 할 수 있는 것" 구체적 예시 2~3개, 사용자 일상/업무 장면으로 서술, 줄바꿈 \\n 구분.
+  (예: "매일 아침 받은 메일을 중요도별로 정리해 텔레그램으로 받기")
 
 반드시 아래 형식의 JSON 배열만 출력하세요. 다른 텍스트 금지.
-[{{"id": 1, "relevance": 85, "actionability": 70, "kind": "구현", "category": "업무자동화", "summary": "..."}}]
+[{{"id": 1, "relevance": 85, "actionability": 70, "kind": "구현", "category": "업무자동화", "summary": "...", "easy": "...", "use_cases": "...\\n..."}}]
 
 수집 항목:
 {items}"""
@@ -66,6 +70,8 @@ BLUEPRINT_PROMPT = """당신은 AI 자동화 구현 컨설턴트입니다. 아�
 
 구성 (이 순서대로):
 # (제목)
+## 쉽게 말하면 — 전문용어 없이 처음 듣는 사람도 이해할 수 있게 2~3문장 (비유 환영)
+## 이걸로 할 수 있는 것 — 사용자의 일상·업무 장면으로 구체적 예시 3개 (번호 목록, 각 1문장)
 ## 개요 — 무엇을 자동화하는가, 어떤 가치가 있는가 (2~3문장)
 ## 구현 가능성 — 상/중/하 + 근거
 ## 필요 도구 — 구체적 도구/API/라이브러리 목록 (비용 여부 표시)
@@ -146,14 +152,16 @@ def score_items(conn, log) -> int:
             kind = res.get("kind") if res.get("kind") in ("구현", "뉴스") else "뉴스"
             # 점수는 채점 시점의 주제 기준이므로 topic도 그 시점 값으로 덮어씀
             conn.execute(
-                """UPDATE items SET score=?, kind=?, category=?, summary=?, processed_at=?,
-                                    topic=?, status='processed'
+                """UPDATE items SET score=?, kind=?, category=?, summary=?, easy=?, use_cases=?,
+                                    processed_at=?, topic=?, status='processed'
                    WHERE id=?""",
                 (
                     final_score(int(res.get("relevance", 0)), int(res.get("actionability", 0)), kind),
                     kind,
                     res.get("category", "기타"),
                     res.get("summary", ""),
+                    res.get("easy") or None,
+                    "\n".join(res["use_cases"]) if isinstance(res.get("use_cases"), list) else (res.get("use_cases") or None),
                     now,
                     current_topic,
                     res["id"],

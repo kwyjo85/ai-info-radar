@@ -34,7 +34,7 @@ st.set_page_config(page_title="AI Info Radar", layout="wide")
 def load_items() -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql_query(
-            "SELECT id, score, kind, category, status, source, title, summary, content, url, "
+            "SELECT id, score, kind, category, status, source, title, summary, easy, use_cases, content, url, "
             "blueprint_path, published_at, collected_at, topic FROM items",
             conn,
         )
@@ -78,8 +78,15 @@ def render_card(row) -> None:
         ]))
         st.caption(meta)
 
+        if isinstance(row.easy, str) and row.easy:
+            st.info(f"💬 {row.easy}")
         if row.summary and isinstance(row.summary, str):
             for line in row.summary.split("\n"):
+                if line.strip():
+                    st.markdown(f"- {line.strip()}")
+        if isinstance(row.use_cases, str) and row.use_cases.strip():
+            st.markdown("**💡 이걸로 할 수 있는 것**")
+            for line in row.use_cases.split("\n"):
                 if line.strip():
                     st.markdown(f"- {line.strip()}")
 

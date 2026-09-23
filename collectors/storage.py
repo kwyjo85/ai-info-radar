@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS items (
     kind          TEXT,                     -- 구현 (기법/도구/워크플로우) | 뉴스 (출시소식/의견/홍보)
     category      TEXT,
     summary       TEXT,
+    easy          TEXT,                     -- 전문용어 없는 쉬운 설명 1~2문장
+    use_cases     TEXT,                     -- '이걸로 할 수 있는 것' 예시 (줄바꿈 구분)
     blueprint_path TEXT,
     processed_at  TEXT,
     status        TEXT NOT NULL DEFAULT 'new'  -- new | processed | briefed | approved | skipped
@@ -54,7 +56,7 @@ def connect() -> sqlite3.Connection:
 def _migrate(conn: sqlite3.Connection) -> None:
     """기존 DB에 새 컬럼 추가 (CREATE TABLE IF NOT EXISTS는 기존 테이블을 바꾸지 않음)."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
-    for col, ddl in {"kind": "TEXT", "topic": "TEXT"}.items():
+    for col, ddl in {"kind": "TEXT", "topic": "TEXT", "easy": "TEXT", "use_cases": "TEXT"}.items():
         if col not in existing:
             conn.execute(f"ALTER TABLE items ADD COLUMN {col} {ddl}")
     # 주제 기능 도입 전에 채점된 항목은 기본 주제로 간주 (브리핑 필터에서 빠지지 않게)

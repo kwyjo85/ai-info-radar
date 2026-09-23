@@ -41,7 +41,7 @@ log = logging.getLogger("publish")
 
 def build_payload(conn) -> dict:
     rows = conn.execute(
-        """SELECT id, score, kind, category, status, source, title, summary, url, author,
+        """SELECT id, score, kind, category, status, source, title, summary, easy, use_cases, url, author,
                   published_at, collected_at, topic, blueprint_path FROM items"""
     ).fetchall()
     items, blueprints = [], {}
