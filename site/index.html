@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Info Radar</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262a33; --text:#e6e8ee; --muted:#8b91a1; --accent:#7c9cff; --green:#3ec38b; --amber:#f5b041; --red:#f06a6a; --purple:#a78bfa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",sans-serif; background:var(--bg); color:var(--text); }
+  a { color:var(--accent); }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:19px; }
+  header .meta { color:var(--muted); font-size:13px; line-height:1.5; }
+  header .topic { color:var(--text); font-weight:600; }
+  main { padding:18px 24px; max-width:1200px; margin:0 auto; }
+  @media (max-width:800px) { header, main { padding:12px; } }
+  .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:16px; }
+  .metric { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .metric .n { font-size:22px; font-weight:700; }
+  .metric .l { font-size:12px; color:var(--muted); }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tab { padding:7px 14px; border-radius:20px; background:var(--card); border:1px solid var(--line); cursor:pointer; font-size:13px; }
+  .tab.active { border-color:var(--accent); color:var(--accent); }
+  .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  select, input[type=search], button { background:#222634; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:13px; }
+  input[type=search] { min-width:200px; flex:1; }
+  input[type=range] { width:110px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:8px; }
+  .card.dim { opacity:.55; }
+  .card .top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .card h3 { margin:0; font-size:15px; line-height:1.4; }
+  .score { font-size:20px; font-weight:800; white-space:nowrap; }
+  .score.hi { color:var(--green); } .score.mid { color:var(--amber); } .score.lo { color:var(--red); }
+  .tags { display:flex; flex-wrap:wrap; gap:5px; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:999px; background:#222634; color:var(--muted); }
+  .tag.kind-구현 { color:var(--green); } .tag.kind-뉴스 { color:var(--amber); } .tag.src { color:var(--accent); } .tag.bp { color:var(--purple); }
+  .summary { font-size:13px; color:var(--text); line-height:1.6; white-space:pre-line; }
+  .foot { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); gap:8px; flex-wrap:wrap; }
+  .foot button { padding:5px 10px; font-size:12px; }
+  .bp { margin-top:6px; border-top:1px solid var(--line); padding-top:10px; font-size:13px; line-height:1.65; }
+  .bp h1 { font-size:16px; } .bp h2 { font-size:14px; color:var(--accent); margin:14px 0 6px; } .bp li { margin:3px 0; } .bp code { background:#222634; padding:1px 5px; border-radius:4px; font-size:12px; }
+  .empty { color:var(--muted); padding:30px; text-align:center; }
+  .more { display:block; margin:16px auto; }
+  #gate { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; z-index:10; }
+  #gate form { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:26px; width:320px; display:flex; flex-direction:column; gap:10px; }
+  #gate h1 { margin:0 0 6px; font-size:18px; }
+  #gate input[type=password] { padding:10px; font-size:15px; }
+  #gate .primary { background:var(--accent); color:#0f1115; font-weight:700; border:none; cursor:pointer; }
+  #gate .err { color:var(--red); font-size:12px; min-height:16px; }
+  .bplist { display:flex; flex-direction:column; gap:10px; }
+  .bplist .card h3 { font-size:14px; }
+</style>
+</head>
+<body>
+<div id="gate"><form id="gateForm"><h1>AI Info Radar 잠금</h1><input type="password" id="pw" placeholder="비밀번호" autofocus autocomplete="current-password"><label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="remember" checked> 이 기기에서 기억</label><div class="err" id="gateErr"></div><button class="primary" type="submit">열기</button></form></div>
+
+<header>
+  <div><h1>AI Info Radar</h1><div class="meta" id="meta"></div></div>
+  <div style="display:flex;gap:8px"><button id="lock">잠금</button></div>
+</header>
+<main>
+  <div class="metrics" id="metrics"></div>
+  <div class="tabs"><span class="tab active" data-tab="feed">피드</span><span class="tab" data-tab="bps">블루프린트</span></div>
+  <section id="feedPane">
+    <div class="filters">
+      <select id="fTopic"><option value="">모든 주제</option></select>
+      <select id="fSource"><option value="">모든 소스</option></select>
+      <select id="fKind"><option value="">구현+뉴스</option><option value="구현">🛠 구현</option><option value="뉴스">📰 뉴스</option></select>
+      <select id="fStatus"><option value="">모든 상태</option></select>
+      <select id="fCat"><option value="">모든 카테고리</option></select>
+      <label style="font-size:12px;color:var(--muted)">최소 <span id="minV">0</span>점 <input type="range" id="fMin" min="0" max="100" step="5" value="0"></label>
+      <select id="fSort"><option value="score">점수순</option><option value="date">최신순</option></select>
+      <input type="search" id="fQ" placeholder="검색 (제목·요약·작성자)">
+      <label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="fBp"> 블루프린트 있는 것만</label>
+    </div>
+    <div class="grid" id="feed"></div>
+    <button class="more" id="more" style="display:none">더 보기</button>
+  </section>
+  <section id="bpsPane" style="display:none"><div class="bplist" id="bps"></div></section>
+</main>
+
+<script>
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  async function decrypt(pw, enc) {
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name:'PBKDF2', salt:b64(enc.salt), iterations:enc.iter, hash:'SHA-256' }, km, { name:'AES-GCM', length:256 }, false, ['decrypt']);
+    const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:b64(enc.iv) }, key, b64(enc.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  const PW_KEY = 'radar-dashboard-pw';
+  (async () => {
+    const enc = await (await fetch('data.enc.json?ts=' + Date.now(), { cache:'no-store' })).json();
+    const tryOpen = async (pw, remember) => {
+      try {
+        window.RADAR = await decrypt(pw, enc);
+        if (remember) localStorage.setItem(PW_KEY, pw); else localStorage.removeItem(PW_KEY);
+        document.getElementById('gate').style.display = 'none';
+        boot();
+        return true;
+      } catch (e) { return false; }
+    };
+    const saved = localStorage.getItem(PW_KEY);
+    if (saved && await tryOpen(saved, true)) return;
+    document.getElementById('gateForm').onsubmit = async ev => {
+      ev.preventDefault();
+      const ok = await tryOpen(document.getElementById('pw').value, document.getElementById('remember').checked);
+      if (!ok) document.getElementById('gateErr').textContent = '비밀번호가 맞지 않습니다';
+    };
+  })();
+  document.getElementById('lock').onclick = () => { localStorage.removeItem(PW_KEY); location.reload(); };
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const STATUS = { new:'미처리', processed:'처리됨', briefed:'브리핑됨', approved:'구현 승인', skipped:'스킵' };
+  const PAGE = 30;
+
+  function boot() {
+    const D = window.RADAR, items = D.items, bps = D.blueprints || {};
+    document.getElementById('meta').innerHTML =
+      `주제: <span class="topic">${esc(D.topic || '(기본)')}</span><br>갱신 ${new Date(D.generatedAt).toLocaleString('ko-KR')} · 전체 ${items.length}건`;
+    const m = [
+      ['전체 수집', items.length], ['70점 이상', items.filter(i => i.score >= 70).length],
+      ['블루프린트', items.filter(i => i.blueprint).length], ['🛠 구현', items.filter(i => i.kind === '구현').length],
+      ['📰 뉴스', items.filter(i => i.kind === '뉴스').length], ['미처리', items.filter(i => i.status === 'new').length],
+    ];
+    document.getElementById('metrics').innerHTML = m.map(([l, n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+    const uniq = a => [...new Set(a.filter(Boolean))].sort();
+    const fill = (id, vals, label) => { const s = document.getElementById(id); vals.forEach(v => s.add(new Option(label ? label(v) : v, v))); };
+    fill('fTopic', uniq(items.map(i => i.topic)), v => v.length > 40 ? v.slice(0, 40) + '…' : v);
+    fill('fSource', uniq(items.map(i => i.source)));
+    fill('fStatus', uniq(items.map(i => i.status)), v => STATUS[v] || v);
+    fill('fCat', uniq(items.map(i => i.category)));
+    if (D.topic && [...document.getElementById('fTopic').options].some(o => o.value === D.topic)) document.getElementById('fTopic').value = D.topic;
+
+    let shown = PAGE;
+    const $ = id => document.getElementById(id);
+    const filtered = () => {
+      const t = $('fTopic').value, s = $('fSource').value, k = $('fKind').value, st = $('fStatus').value, c = $('fCat').value;
+      const min = +$('fMin').value, q = $('fQ').value.trim().toLowerCase(), onlyBp = $('fBp').checked;
+      let r = items.filter(i =>
+        (!t || i.topic === t) && (!s || i.source === s) && (!k || i.kind === k) && (!st || i.status === st) && (!c || i.category === c) &&
+        ((i.score ?? -1) >= min || (min === 0)) && (!onlyBp || i.blueprint) &&
+        (!q || [i.title, i.summary, i.author, i.category].join(' ').toLowerCase().includes(q)));
+      r.sort($('fSort').value === 'score'
+        ? (a, b) => (b.score ?? -1) - (a.score ?? -1)
+        : (a, b) => (b.published_at || b.collected_at || '').localeCompare(a.published_at || a.collected_at || ''));
+      return r;
+    };
+    const scoreCls = s => s == null ? '' : s >= 70 ? 'hi' : s >= 40 ? 'mid' : 'lo';
+    const card = i => `<div class="card ${i.status === 'skipped' ? 'dim' : ''}">
+      <div class="top"><h3>${esc(i.title || '(제목 없음)')}</h3><span class="score ${scoreCls(i.score)}">${i.score ?? '–'}</span></div>
+      <div class="tags">${i.kind ? `<span class="tag kind-${i.kind}">${i.kind === '구현' ? '🛠 구현' : '📰 뉴스'}</span>` : ''}<span class="tag src">${esc(i.source)}</span>${i.category ? `<span class="tag">${esc(i.category)}</span>` : ''}<span class="tag">${STATUS[i.status] || esc(i.status)}</span>${i.blueprint ? '<span class="tag bp">📋 블루프린트</span>' : ''}</div>
+      ${i.summary ? `<div class="summary">${esc(i.summary)}</div>` : ''}
+      <div class="foot"><span>${esc(i.author || '')} ${i.published_at ? '· ' + i.published_at.slice(0, 10) : ''}</span>
+        <span><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a> ${i.blueprint ? `<button data-bp="${esc(i.blueprint)}">블루프린트</button>` : ''}</span></div>
+      <div class="bp" style="display:none"></div></div>`;
+    const render = () => {
+      const r = filtered();
+      $('feed').innerHTML = r.length ? r.slice(0, shown).map(card).join('') : '<div class="empty">조건에 맞는 항목이 없습니다</div>';
+      $('more').style.display = r.length > shown ? 'block' : 'none';
+      $('more').textContent = `더 보기 (${Math.min(shown, r.length)}/${r.length})`;
+    };
+    ['fTopic','fSource','fKind','fStatus','fCat','fSort','fBp'].forEach(id => $(id).onchange = () => { shown = PAGE; render(); });
+    $('fQ').oninput = () => { shown = PAGE; render(); };
+    $('fMin').oninput = () => { $('minV').textContent = $('fMin').value; shown = PAGE; render(); };
+    $('more').onclick = () => { shown += PAGE; render(); };
+    $('feed').onclick = ev => {
+      const b = ev.target.closest('button[data-bp]'); if (!b) return;
+      const box = b.closest('.card').querySelector('.bp');
+      if (box.style.display === 'none') { box.innerHTML = marked.parse(bps[b.dataset.bp] || '(블루프린트 내용 없음)'); box.style.display = 'block'; b.textContent = '접기'; }
+      else { box.style.display = 'none'; b.textContent = '블루프린트'; }
+    };
+    render();
+
+    // 블루프린트 탭
+    const withBp = items.filter(i => i.blueprint).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    $('bps').innerHTML = withBp.length ? withBp.map(i => `<div class="card"><div class="top"><h3>${esc(i.title)}</h3><span class="score ${scoreCls(i.score)}">${i.score}</span></div>
+      <div class="tags"><span class="tag src">${esc(i.source)}</span><span class="tag">${esc(i.topic || '').slice(0, 30)}</span><span class="tag">${esc(i.blueprint)}</span></div>
+      <details><summary style="cursor:pointer;color:var(--accent);font-size:13px">내용 보기</summary><div class="bp">${marked.parse(bps[i.blueprint] || '')}</div></details>
+      <div class="foot"><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a></div></div>`).join('') : '<div class="empty">블루프린트가 없습니다</div>';
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+      $('feedPane').style.display = t.dataset.tab === 'feed' ? '' : 'none';
+      $('bpsPane').style.display = t.dataset.tab === 'bps' ? '' : 'none';
+    });
+  }
+</script>
+</body>
+</html>

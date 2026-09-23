@@ -9,3 +9,4 @@ localhost-key.pem
 *.pem
 .DS_Store
 .playwright-mcp/
+.claude/launch.json
