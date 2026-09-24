@@ -57,6 +57,19 @@
   #gate .primary { background:var(--accent); color:#0f1115; font-weight:700; border:none; cursor:pointer; }
   #gate .err { color:var(--red); font-size:12px; min-height:16px; }
   .bplist { display:flex; flex-direction:column; gap:10px; }
+  /* 블루프린트 시트(모달): 카드 안에 펼치면 폰에서 닫기 버튼이 멀어지므로 화면을 덮는 시트로 */
+  #bpModal { position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
+  #bpModal .sheet { background:var(--card); width:100%; max-width:860px; max-height:92vh; border-radius:14px 14px 0 0; display:flex; flex-direction:column; border:1px solid var(--line); }
+  #bpModal .bar { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  #bpModal .bar .t { font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #bpModal .bar .acts { display:flex; gap:6px; flex-shrink:0; }
+  #bpModal .bar button { flex-shrink:0; background:var(--accent); color:#0f1115; font-weight:700; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  #bpModal .bar button.sec { background:#222634; color:var(--text); border:1px solid var(--line); font-weight:600; }
+  #bpModal .bar button.ok { background:var(--green); color:#0f1115; }
+  #bpRaw { width:100%; min-height:220px; margin-top:14px; background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:"SF Mono",Menlo,monospace; font-size:12px; }
+  #bpModal .body { overflow:auto; padding:0 16px 28px; -webkit-overflow-scrolling:touch; }
+  #bpModal .body .bp { border-top:none; }
+  #bpModal .close-bottom { display:block; margin:18px auto 0; background:#222634; color:var(--text); border:1px solid var(--line); padding:9px 18px; border-radius:8px; cursor:pointer; }
   .bplist .card h3 { font-size:14px; }
 </style>
 </head>
@@ -87,6 +100,19 @@
   </section>
   <section id="bpsPane" style="display:none"><div class="bplist" id="bps"></div></section>
 </main>
+
+<div id="bpModal" style="display:none">
+  <div class="sheet">
+    <div class="bar"><span class="t" id="bpTitle">블루프린트</span>
+      <span class="acts"><button type="button" class="sec" id="bpCopy" title="마크다운 원문 복사">복사</button><button type="button" class="sec" id="bpCopyPrompt" title="Claude Code에 붙여넣을 구현 지시문으로 복사">지시문 복사</button><button type="button" id="bpClose">닫기 ✕</button></span></div>
+    <div class="body"><div class="bp" id="bpBody"></div>
+      <textarea id="bpRaw" style="display:none" readonly></textarea>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px">
+        <button type="button" class="close-bottom" id="bpCopyBottom" style="margin:0">지시문 복사</button>
+        <button type="button" class="close-bottom" id="bpCloseBottom" style="margin:0">닫기</button>
+      </div></div>
+  </div>
+</div>
 
 <script>
   const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -178,12 +204,42 @@
     $('fQ').oninput = () => { shown = PAGE; render(); };
     $('fMin').oninput = () => { $('minV').textContent = $('fMin').value; shown = PAGE; render(); };
     $('more').onclick = () => { shown += PAGE; render(); };
-    $('feed').onclick = ev => {
-      const b = ev.target.closest('button[data-bp]'); if (!b) return;
-      const box = b.closest('.card').querySelector('.bp');
-      if (box.style.display === 'none') { box.innerHTML = marked.parse(bps[b.dataset.bp] || '(블루프린트 내용 없음)'); box.style.display = 'block'; b.textContent = '접기'; }
-      else { box.style.display = 'none'; b.textContent = '블루프린트'; }
+    // 블루프린트는 화면을 덮는 시트로 열고, 상단 고정 닫기 + 하단 닫기 + 배경 탭 + ESC로 닫음
+    let currentBp = null;
+    const openBp = (name, title) => {
+      currentBp = { name, title: title || name, md: bps[name] || '' };
+      $('bpTitle').textContent = currentBp.title;
+      $('bpBody').innerHTML = marked.parse(currentBp.md || '(블루프린트 내용 없음)');
+      $('bpRaw').style.display = 'none';
+      $('bpModal').style.display = 'flex';
+      $('bpModal').querySelector('.body').scrollTop = 0;
+      document.body.style.overflow = 'hidden';
     };
+    const closeBp = () => { $('bpModal').style.display = 'none'; document.body.style.overflow = ''; };
+    $('bpClose').onclick = closeBp;
+    $('bpCloseBottom').onclick = closeBp;
+
+    // 복사: 클립보드 API → 실패하면(권한/구형 브라우저) 원문 textarea를 펼쳐 길게 눌러 복사할 수 있게
+    const promptText = () => `다음 블루프린트를 이 프로젝트에 구현해줘. 먼저 구현 계획을 단계별로 정리해서 확인받고, 승인 후 진행해.\n\n출처: ${currentBp.name}\n\n${currentBp.md}`;
+    const flash = (btn, ok) => { const t = btn.textContent; btn.textContent = ok ? '복사됨 ✓' : '복사 실패'; btn.classList.toggle('ok', ok); setTimeout(() => { btn.textContent = t; btn.classList.remove('ok'); }, 1600); };
+    const copyText = async (text, btn) => {
+      try { await navigator.clipboard.writeText(text); flash(btn, true); return; } catch (e) {}
+      const ta = $('bpRaw'); ta.value = text; ta.style.display = 'block'; ta.focus(); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      flash(btn, ok);
+      if (!ok) ta.scrollIntoView({ block: 'center' });   // 수동 복사용으로 원문을 남겨둠
+    };
+    $('bpCopy').onclick = () => copyText(currentBp.md, $('bpCopy'));
+    $('bpCopyPrompt').onclick = () => copyText(promptText(), $('bpCopyPrompt'));
+    $('bpCopyBottom').onclick = () => copyText(promptText(), $('bpCopyBottom'));
+    $('bpModal').onclick = ev => { if (ev.target === $('bpModal')) closeBp(); };
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeBp(); });
+    const onBpClick = ev => {
+      const b = ev.target.closest('button[data-bp]'); if (!b) return;
+      openBp(b.dataset.bp, b.closest('.card')?.querySelector('h3')?.firstChild?.textContent);
+    };
+    $('feed').onclick = onBpClick;
+    $('bps').onclick = onBpClick;
     render();
 
     // 블루프린트 탭
@@ -192,8 +248,7 @@
       <div class="tags"><span class="tag src">${esc(i.source)}</span><span class="tag">${esc(i.topic || '').slice(0, 30)}</span><span class="tag">${esc(i.blueprint)}</span></div>
       ${i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : ''}
       ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
-      <details><summary style="cursor:pointer;color:var(--accent);font-size:13px">내용 보기</summary><div class="bp">${marked.parse(bps[i.blueprint] || '')}</div></details>
-      <div class="foot"><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a></div></div>`).join('') : '<div class="empty">블루프린트가 없습니다</div>';
+      <div class="foot"><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a> <button data-bp="${esc(i.blueprint)}">블루프린트 보기</button></div></div>`).join('') : '<div class="empty">블루프린트가 없습니다</div>';
     document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
       document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
       $('feedPane').style.display = t.dataset.tab === 'feed' ? '' : 'none';
