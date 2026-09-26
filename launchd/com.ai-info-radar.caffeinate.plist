@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  선택 설치: 전원 어댑터 연결 중 시스템 슬립 방지 (caffeinate).
+  전원 어댑터 연결 중 시스템 슬립 방지 (caffeinate). scripts/install_mac.sh가 기본으로 등록.
   -s: 전원 연결 시 시스템 슬립 방지  -i: 유휴 슬립 방지
   배터리 + 덮개 닫힘 상태에서는 효과 없음 (macOS 정책). 전원을 연결해 두어야 함.
 
