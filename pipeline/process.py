@@ -144,7 +144,7 @@ def score_items(conn, log) -> int:
             items=json.dumps(payload, ensure_ascii=False, indent=1),
         )
         try:
-            results = parse_json_array(llm.complete(prompt, model="haiku"))
+            results = parse_json_array(llm.complete(prompt, model="haiku", task="score"))
         except Exception:
             log.exception("점수 배치 실패 (id %s~%s)", batch[0]["id"], batch[-1]["id"])
             continue
@@ -233,7 +233,7 @@ def make_blueprint(conn, item_id: int, log) -> Path:
     prompt = BLUEPRINT_PROMPT.format(
         topic=topic.topic_text(conn), title=title, url=row["url"], content=content[:BLUEPRINT_CONTENT_CHARS]
     )
-    md = llm.complete(prompt, model="sonnet")
+    md = llm.complete(prompt, model="sonnet", task="blueprint")
     BLUEPRINT_DIR.mkdir(exist_ok=True)
     path = BLUEPRINT_DIR / f"{datetime.now():%Y-%m-%d}-{slugify(title)}.md"
     path.write_text(md + f"\n\n---\n원본: {row['url']}\n")

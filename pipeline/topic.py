@@ -66,7 +66,7 @@ def set_topic(text: str) -> dict:
     text = text.strip()
     if not text:
         raise ValueError("주제가 비어 있습니다")
-    expanded = _parse_json_object(llm.complete(EXPAND_PROMPT.format(topic=text), model="haiku"))
+    expanded = _parse_json_object(llm.complete(EXPAND_PROMPT.format(topic=text), model="haiku", task="topic"))
     data = {
         "topic": text,
         "keywords_ko": [k for k in expanded.get("keywords_ko", []) if k][:8],

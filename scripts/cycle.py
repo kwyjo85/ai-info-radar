@@ -4,6 +4,7 @@
 """
 
 import sys
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -16,18 +17,24 @@ from scripts.git_sync import sync as git_sync
 from scripts.publish_dashboard import publish as publish_dashboard
 
 
+STAGES = [
+    ("collect", "수집", collect_main),
+    ("process", "처리", process_main),
+    ("publish", "대시보드 배포", publish_dashboard),
+    ("git-sync", "동기화", git_sync),
+]
+
+
 def main():
+    # 한 단계가 실패해도 다음 단계는 돈다 (예: 수집 실패여도 쌓인 항목 처리·배포는 진행).
+    # '[단계] … 실패:' 줄은 운영 현황 대시보드(dashboard/ops.py)가 에러로 집계함.
     print(f"=== cycle start {datetime.now():%Y-%m-%d %H:%M:%S} ===", flush=True)
-    collect_main()
-    process_main()
-    try:
-        publish_dashboard()
-    except Exception as e:
-        print(f"[publish] 대시보드 배포 실패: {e}", flush=True)
-    try:
-        git_sync()
-    except Exception as e:
-        print(f"[git-sync] 동기화 실패: {e}", flush=True)
+    for key, label, fn in STAGES:
+        try:
+            fn()
+        except Exception as e:
+            print(f"[{key}] {label} 실패: {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
     print(f"=== cycle end {datetime.now():%Y-%m-%d %H:%M:%S} ===", flush=True)
 
 
