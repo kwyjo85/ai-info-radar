@@ -33,6 +33,11 @@ API_MODELS = {
 CLI_SYSTEM_PROMPT = "You are a precise assistant inside an automated pipeline. Follow the requested output format exactly and output nothing else."
 CLI_FLAGS = ["--tools", "", "--strict-mcp-config", "--system-prompt", CLI_SYSTEM_PROMPT, "--no-session-persistence"]
 
+# 생각(thinking)을 끌 모델. 채점·주제 확장(haiku)은 형식이 정해진 JSON 작업이라 생각 토큰이 출력의 87%를 차지했고,
+# 끄면 출력·비용이 절반 이하로 줄면서 점수가 더 일정했다 (2026-09-27, 10건 배치 반복 비교: 켬↔켬 평균 4.5점 차, 끔↔끔 2.3점 차).
+# 블루프린트(sonnet)는 긴 글 작성이라 그대로 둔다.
+NO_THINKING_MODELS = {"haiku"}
+
 
 def _claude_bin() -> str:
     found = shutil.which("claude")
@@ -50,6 +55,8 @@ def _complete_cli(prompt: str, model: str, task: str) -> str:
     oauth_token = _ENV.get("CLAUDE_CODE_OAUTH_TOKEN")
     if oauth_token and not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    if model in NO_THINKING_MODELS:
+        env["MAX_THINKING_TOKENS"] = "0"
     r = subprocess.run(
         [_claude_bin(), "-p", "--model", model, "--output-format", "json", *CLI_FLAGS],
         input=prompt,
