@@ -34,8 +34,12 @@ def _transcript(video_id: str) -> str | None:
 
 
 def collect() -> list[dict]:
+    channels = load_channels()
+    if not channels:
+        log.debug("youtube: config/feeds.yaml youtube_channels 비어 있음, 건너뜀")
+        return []
     items = []
-    for cid in load_channels():
+    for cid in channels:
         parsed = feedparser.parse(CHANNEL_FEED.format(cid=cid))
         if not parsed.entries:
             log.warning("youtube: 채널 피드 비어있음 %s", cid)

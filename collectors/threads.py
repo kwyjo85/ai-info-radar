@@ -3,10 +3,12 @@
 주의: threads_keyword_search 권한이 App Review 승인 전이라
 현재는 본인 게시물만 검색됨. 심사 통과 후 공개 게시물 검색 가능.
 쿼리 한도: 사용자당 롤링 24시간 2,200쿼리.
+권한 없음(App Review 전) 응답을 받으면 BLOCKED_RETRY_HOURS 동안 요청을 쉰다 (settings.threads_blocked_until).
 """
 
 import logging
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -15,9 +17,12 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from collectors import storage
 from pipeline import topic
 
 GRAPH = "https://graph.threads.net/v1.0"
+BLOCKED_KEY = "threads_blocked_until"
+BLOCKED_RETRY_HOURS = 24
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +37,18 @@ def collect() -> list[dict]:
     if not token:
         log.warning("threads: 토큰 없음, 건너뜀")
         return []
+    conn = storage.connect()
+    try:
+        until = storage.get_setting(conn, BLOCKED_KEY)
+        if until and datetime.now() < datetime.fromisoformat(until):
+            log.info("threads: keyword_search 권한 없음 — %s까지 요청 쉼", until[:16].replace("T", " "))
+            return []
+        return _search(token, conn)
+    finally:
+        conn.close()
+
+
+def _search(token: str, conn) -> list[dict]:
 
     items = []
     with httpx.Client(timeout=30) as client:
@@ -51,7 +68,9 @@ def collect() -> list[dict]:
                 err = r.json().get("error", {}) if "json" in r.headers.get("content-type", "") else {}
                 msg = err.get("message", r.text[:200])
                 if err.get("error_subcode") == 4279067:  # App Review 전 액세스 티어 제한
-                    log.warning("threads: keyword_search 권한 없음 (App Review 필요) — 수집 중단")
+                    until = (datetime.now() + timedelta(hours=BLOCKED_RETRY_HOURS)).isoformat(timespec="seconds")
+                    storage.set_setting(conn, BLOCKED_KEY, until)
+                    log.warning("threads: keyword_search 권한 없음 (App Review 필요) — %d시간 뒤 재시도", BLOCKED_RETRY_HOURS)
                     break
                 log.warning("threads: 키워드 '%s' 검색 실패 (%d): %s", kw, r.status_code, msg)
                 continue

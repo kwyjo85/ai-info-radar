@@ -37,6 +37,10 @@ EXPAND_PROMPT = """사용자가 정보 수집 주제를 다음과 같이 설정�
 
 REQUEUE_DAYS = 14  # 주제 변경 시 최근 N일 항목을 새 주제로 재평가
 
+# 검색 피드(HN·Google 뉴스)가 연속으로 결과 0건인 횟수 {질의어: 횟수}. collectors/rss.py가 갱신.
+EMPTY_STREAK_KEY = "rss_empty_streak"
+EMPTY_STREAK_WARN = 12  # 30분 사이클 기준 약 6시간 연속 0건이면 쓸모없는 검색어로 봄
+
 
 def _parse_json_object(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
@@ -120,6 +124,19 @@ def hn_queries(conn=None) -> list[str]:
     return data.get("hn_search_default") or []
 
 
+def empty_queries(conn=None) -> list[str]:
+    """EMPTY_STREAK_WARN회 이상 연속으로 결과가 없는 검색어."""
+    own = conn is None
+    conn = conn or storage.connect()
+    try:
+        raw = storage.get_setting(conn, EMPTY_STREAK_KEY)
+    finally:
+        if own:
+            conn.close()
+    streaks = json.loads(raw) if raw else {}
+    return [q for q, n in streaks.items() if n >= EMPTY_STREAK_WARN]
+
+
 def format_topic(t: dict | None) -> str:
     if not t:
         return f"현재 주제: (기본) {DEFAULT_TOPIC}\nconfig/keywords.yaml · feeds.yaml 기본 검색어 사용 중"
@@ -135,5 +152,10 @@ def format_topic(t: dict | None) -> str:
             f"\n\n⚠️ '{', '.join(t['unknown_terms'])}'이(가) 무엇인지 확실하지 않아 검색어가 부정확할 수 있습니다. "
             "정확한 이름이나 설명을 붙여 다시 설정해 주세요.\n"
             "예) 주제 설정 : jev-router(Claude Code 모델 라우터)를 활용한 비용 절감"
+        )
+    if empty := empty_queries():
+        text += (
+            f"\n\n🔍 최근 {EMPTY_STREAK_WARN // 2}시간 넘게 결과가 없는 검색어: {', '.join(empty)}\n"
+            "주제 문장을 조금 넓게 바꿔 다시 설정하면 검색어가 새로 만들어집니다."
         )
     return text

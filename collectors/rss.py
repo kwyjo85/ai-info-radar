@@ -5,6 +5,7 @@
 - Google 뉴스 검색 피드: 주제가 설정된 경우 한/영 대표 키워드로 동적 생성
 """
 
+import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -17,6 +18,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from collectors import storage
 from collectors.article import html_to_text
 from pipeline import topic
 
@@ -53,10 +55,35 @@ def _published(entry) -> str | None:
     return datetime(*t[:6], tzinfo=timezone.utc).isoformat(timespec="seconds")
 
 
+def _update_empty_streaks(queries: set[str], results: dict[str, bool]) -> None:
+    """검색 질의별 연속 0건 횟수를 갱신하고, 기준에 처음 닿은 질의는 경고.
+
+    queries: 이번 피드의 전체 검색 질의, results: 응답을 받은 질의 → 결과 있음 여부 (요청 실패한 질의는 기존 값 유지).
+    """
+    conn = storage.connect()
+    try:
+        raw = storage.get_setting(conn, topic.EMPTY_STREAK_KEY)
+        old = json.loads(raw) if raw else {}
+        # 현재 피드에 없는 질의(주제 변경으로 사라진 것)는 버림
+        streaks = {q: old.get(q, 0) for q in queries}
+        for q, found in results.items():
+            streaks[q] = 0 if found else streaks[q] + 1
+        for q, n in streaks.items():
+            if n == topic.EMPTY_STREAK_WARN:
+                log.warning("rss: 검색어 '%s' %d회 연속 결과 없음 — 주제 확인에서 안내", q, n)
+        storage.set_setting(conn, topic.EMPTY_STREAK_KEY, json.dumps({q: n for q, n in streaks.items() if n}, ensure_ascii=False))
+    finally:
+        conn.close()
+
+
 def collect() -> list[dict]:
     items = []
-    for feed_url, keyword in load_feeds():
+    searched: dict[str, bool] = {}  # 이번에 응답을 받은 검색 질의 → 결과 있음 여부 (요청 실패는 제외)
+    feeds = load_feeds()
+    for feed_url, keyword in feeds:
         parsed = feedparser.parse(feed_url)
+        if keyword is not None and parsed.get("status") == 200:
+            searched[keyword] = searched.get(keyword, False) or bool(parsed.entries)
         if not parsed.entries:
             # hnrss는 결과 0건일 때 빈 채널을 반환하는데 feedparser가 bozo로 표시함 — 정상 상황
             if parsed.get("status") == 200:
@@ -85,5 +112,9 @@ def collect() -> list[dict]:
                 "keyword": keyword,
                 "published_at": _published(entry),
             })
+    try:
+        _update_empty_streaks({k for _, k in feeds if k is not None}, searched)
+    except Exception:
+        log.exception("rss: 검색어 0건 기록 실패")
     log.info("rss: %d건 수집", len(items))
     return items
