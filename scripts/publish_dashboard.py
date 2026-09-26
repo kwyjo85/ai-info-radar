@@ -9,6 +9,9 @@ site/index.html 및 ig-dashboard와 같은 형식)한 뒤, 임시 디렉토리�
 로컬에서 고치는 중인 화면이 사이클 때문에 먼저 공개되지 않도록 — main에 push해야 배포됨.
 --no-push 로컬 빌드(미리보기)는 작업 폴더 파일을 그대로 쓴다.
 
+데이터·화면·배포 대상이 직전 배포와 같으면 건너뛴다(대부분 사이클은 신규 0~1건).
+단 HEARTBEAT_HOURS가 지나면 변경이 없어도 배포해 대시보드의 '갱신' 시각이 너무 오래되지 않게 한다.
+
 .env:
   RADAR_SITE_REPO           배포 대상 원격 (기본: 이 저장소의 origin). origin도 없으면 배포 건너뜀
   RADAR_SITE_BRANCH         기본 gh-pages
@@ -19,6 +22,7 @@ site/index.html 및 ig-dashboard와 같은 형식)한 뒤, 임시 디렉토리�
 """
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +43,8 @@ from pipeline import topic
 
 SITE_FILES = ["site/index.html", "docs/architecture.html"]  # 올릴 정적 페이지 (저장소 기준 경로, 첫 번째가 index)
 PBKDF2_ITER = 200_000
+HEARTBEAT_HOURS = 6
+PUBLISH_STATE_KEY = "publish_state"  # settings: {"hash": 직전 배포 내용 해시, "at": 배포 시각}
 
 log = logging.getLogger("publish")
 
@@ -79,6 +85,26 @@ def encrypt_bundle(payload: dict, password: str) -> dict:
     b64 = lambda b: base64.b64encode(b).decode()
     return {"v": 1, "kdf": "PBKDF2-SHA256", "iter": PBKDF2_ITER, "salt": b64(salt), "iv": b64(iv),
             "ct": b64(ct), "builtAt": payload["generatedAt"]}
+
+
+def content_hash(payload: dict, pages: dict[str, bytes], repo: str, branch: str) -> str:
+    """배포 내용의 해시. generatedAt은 매번 바뀌므로 제외."""
+    h = hashlib.sha256()
+    data = {k: v for k, v in payload.items() if k != "generatedAt"}
+    h.update(json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+    for name in sorted(pages):
+        h.update(name.encode() + b"\0" + pages[name])
+    h.update(f"{repo}\0{branch}".encode())
+    return h.hexdigest()
+
+
+def _unchanged_recently(conn, digest: str) -> bool:
+    raw = storage.get_setting(conn, PUBLISH_STATE_KEY)
+    if not raw:
+        return False
+    state = json.loads(raw)
+    age = datetime.now(timezone.utc) - datetime.fromisoformat(state["at"])
+    return state.get("hash") == digest and age.total_seconds() < HEARTBEAT_HOURS * 3600
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -141,8 +167,14 @@ def publish(push: bool = True, out_dir: Path | None = None) -> Path | None:
     pages = site_files(ref)
 
     conn = storage.connect()
-    payload = build_payload(conn)
-    conn.close()
+    try:
+        payload = build_payload(conn)
+        digest = content_hash(payload, pages, repo, branch)
+        if push and _unchanged_recently(conn, digest):
+            log.info("대시보드 변경 없음 — 배포 건너뜀 (%d items)", len(payload["items"]))
+            return None
+    finally:
+        conn.close()
     bundle = encrypt_bundle(payload, password)
 
     tmp = None
@@ -161,6 +193,11 @@ def publish(push: bool = True, out_dir: Path | None = None) -> Path | None:
         r = _git(out, "push", "--force", "-q", repo, f"HEAD:refs/heads/{branch}")
         if r.returncode != 0:
             raise RuntimeError(f"push 실패: {r.stderr.strip()[:300]}")
+        conn = storage.connect()
+        try:
+            storage.set_setting(conn, PUBLISH_STATE_KEY, json.dumps({"hash": digest, "at": payload["generatedAt"]}))
+        finally:
+            conn.close()
         site_rev = _git(ROOT, "rev-parse", "--short", ref).stdout.strip()
         log.info("대시보드 배포 완료 → %s (%s): %d items, %d blueprints, 화면 %s@%s",
                  repo, branch, len(payload["items"]), len(payload["blueprints"]), ref, site_rev)

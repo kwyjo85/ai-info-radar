@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from collectors import storage
+from collectors import article, storage
 from pipeline import llm, topic
 
 BLUEPRINT_DIR = ROOT / "blueprints"
@@ -21,8 +21,11 @@ LOG_DIR = ROOT / "logs"
 
 SCORE_BATCH = 10          # 점수 매기기 한 번에 묶는 항목 수
 MAX_ITEMS_PER_RUN = 120   # 한 실행당 처리 상한 (구독 사용량 보호; 주제 변경 시 300건+ 재평가를 2~3사이클에 끝내기 위함)
-BLUEPRINT_THRESHOLD = 70
-MAX_BLUEPRINTS_PER_RUN = 5
+BLUEPRINT_THRESHOLD = 80      # 이 점수 이상 구현 항목만 자동 생성 (그 아래는 텔레그램에서 요청 시 생성)
+MAX_BLUEPRINTS_PER_RUN = 2
+MAX_BLUEPRINTS_PER_DAY = 5     # 자동 생성 하루 상한 (그날 요청 생성분 포함해 셈)
+MAX_BODY_ATTEMPTS_PER_RUN = 10 # 본문 없는 후보가 강등되며 넘어갈 수 있게, 한 실행에 살펴볼 후보 수
+BLUEPRINT_CONTENT_CHARS = 6000
 
 CATEGORIES = ["업무자동화", "AI에이전트", "개발도구", "노코드", "LLM활용", "기타"]
 
@@ -59,7 +62,7 @@ SCORE_PROMPT = """당신은 정보 큐레이터입니다. 사용자가 현재 �
 
 
 def final_score(relevance: int, actionability: int, kind: str) -> int:
-    """관련도 40% + 실행가능성 60%. 뉴스류는 상한을 둬 블루프린트 임계치(70)를 넘지 못하게 함."""
+    """관련도 40% + 실행가능성 60%. 뉴스류는 상한을 둬 블루프린트 자동 생성 임계치를 넘지 못하게 함."""
     score = round(0.4 * relevance + 0.6 * actionability)
     if kind == "뉴스":
         score = min(score, NEWS_SCORE_CAP)
@@ -177,36 +180,99 @@ def score_items(conn, log) -> int:
     return scored
 
 
+class NoBodyError(Exception):
+    """원문 본문을 얻지 못해 블루프린트를 만들 수 없음 (항목은 뉴스로 강등됨)."""
+
+
+def ensure_body(conn, row) -> str | None:
+    """블루프린트용 본문. 저장된 본문이 링크·메타데이터뿐이면 원문 페이지에서 가져와 DB에 저장.
+
+    끝내 못 얻으면 None (HN 링크 글, Google 뉴스 리다이렉트 등).
+    """
+    content = article.html_to_text(row["content"])
+    if not article.is_thin(content):
+        return content
+    body = article.fetch_body(row["url"])
+    if body is None:
+        return None
+    merged = body + (f"\n\n---\n[피드 정보] {content}" if content else "")
+    conn.execute("UPDATE items SET content=? WHERE id=?", (merged, row["id"]))
+    conn.commit()
+    return merged
+
+
+def _demote_to_news(conn, item_id: int) -> None:
+    """읽을 본문이 없는 항목은 '구현'으로 볼 근거가 없으므로 뉴스로 내리고 점수 상한 적용."""
+    conn.execute(
+        "UPDATE items SET kind='뉴스', score=MIN(COALESCE(score, 0), ?) WHERE id=?",
+        (NEWS_SCORE_CAP, item_id),
+    )
+    conn.commit()
+
+
+def make_blueprint(conn, item_id: int, log) -> Path:
+    """항목 하나의 블루프린트를 생성해 저장하고 경로를 반환. 이미 있으면 그대로 반환.
+
+    본문이 없으면 뉴스로 강등하고 NoBodyError. 텔레그램 봇의 요청 생성에서도 호출됨.
+    """
+    row = conn.execute(
+        "SELECT id, COALESCE(title_ko, title) AS title, url, content, summary, blueprint_path FROM items WHERE id=?",
+        (item_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"항목 {item_id} 없음")
+    if row["blueprint_path"] and (ROOT / row["blueprint_path"]).exists():
+        return ROOT / row["blueprint_path"]
+
+    content = ensure_body(conn, row)
+    if content is None:
+        _demote_to_news(conn, item_id)
+        raise NoBodyError(row["url"])
+
+    title = row["title"] or (row["summary"] or "").split("\n")[0] or f"item-{row['id']}"
+    prompt = BLUEPRINT_PROMPT.format(
+        topic=topic.topic_text(conn), title=title, url=row["url"], content=content[:BLUEPRINT_CONTENT_CHARS]
+    )
+    md = llm.complete(prompt, model="sonnet")
+    BLUEPRINT_DIR.mkdir(exist_ok=True)
+    path = BLUEPRINT_DIR / f"{datetime.now():%Y-%m-%d}-{slugify(title)}.md"
+    path.write_text(md + f"\n\n---\n원본: {row['url']}\n")
+    conn.execute("UPDATE items SET blueprint_path=? WHERE id=?", (str(path.relative_to(ROOT)), item_id))
+    conn.commit()
+    log.info("블루프린트 생성: %s (항목 id=%d)", path.name, item_id)
+    return path
+
+
 def generate_blueprints(conn, log) -> int:
+    """고득점(BLUEPRINT_THRESHOLD↑) 구현 항목만 자동 생성. 나머지는 텔레그램 [블루프린트 보기]로 요청 시 생성."""
+    made_today = conn.execute(
+        "SELECT COUNT(*) FROM items WHERE blueprint_path LIKE ?", (f"blueprints/{datetime.now():%Y-%m-%d}-%",)
+    ).fetchone()[0]
+    budget = min(MAX_BLUEPRINTS_PER_RUN, MAX_BLUEPRINTS_PER_DAY - made_today)
+    if budget <= 0:
+        return 0
     rows = conn.execute(
-        """SELECT id, COALESCE(title_ko, title) AS title, url, content, summary FROM items
+        """SELECT id FROM items
            WHERE status='processed' AND score >= ? AND blueprint_path IS NULL
              AND COALESCE(kind, '구현') = '구현' AND topic = ?
            ORDER BY score DESC LIMIT ?""",
-        (BLUEPRINT_THRESHOLD, topic.topic_text(conn), MAX_BLUEPRINTS_PER_RUN),
+        (BLUEPRINT_THRESHOLD, topic.topic_text(conn), MAX_BODY_ATTEMPTS_PER_RUN),
     ).fetchall()
-    if not rows:
-        return 0
 
-    BLUEPRINT_DIR.mkdir(exist_ok=True)
-    current_topic = topic.topic_text(conn)
-    made = 0
+    made = demoted = 0
     for r in rows:
-        title = r["title"] or (r["summary"] or "").split("\n")[0] or f"item-{r['id']}"
-        prompt = BLUEPRINT_PROMPT.format(
-            topic=current_topic, title=title, url=r["url"], content=(r["content"] or "")[:3000]
-        )
+        if made >= budget:
+            break
         try:
-            md = llm.complete(prompt, model="sonnet")
+            make_blueprint(conn, r["id"], log)
+            made += 1
+        except NoBodyError as e:
+            demoted += 1
+            log.info("본문 없음 → 뉴스로 강등, 블루프린트 생략 (id %d, %.80s)", r["id"], str(e))
         except Exception:
             log.exception("블루프린트 생성 실패 (id %d)", r["id"])
-            continue
-        path = BLUEPRINT_DIR / f"{datetime.now():%Y-%m-%d}-{slugify(title)}.md"
-        path.write_text(md + f"\n\n---\n원본: {r['url']}\n")
-        conn.execute("UPDATE items SET blueprint_path=? WHERE id=?", (str(path.relative_to(ROOT)), r["id"]))
-        conn.commit()
-        made += 1
-        log.info("블루프린트 생성: %s (score 항목 id=%d)", path.name, r["id"])
+    if demoted:
+        log.info("본문 없는 후보 %d건을 뉴스로 강등", demoted)
     return made
 
 

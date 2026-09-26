@@ -75,6 +75,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "UPDATE items SET status='rescore' WHERE status='briefed' AND (title_ko IS NULL OR easy IS NULL)"
         )
         set_setting(conn, "migrated_title_ko_rescore", "1")
+    # RSS 본문의 HTML 태그 제거 도입 전에 쌓인 항목을 1회 정리 (새 항목은 수집 시 정리됨)
+    if not conn.execute("SELECT 1 FROM settings WHERE key='migrated_html_to_text'").fetchone():
+        from collectors.article import html_to_text
+
+        rows = conn.execute("SELECT id, content FROM items WHERE source='rss' AND content LIKE '%<%>%'").fetchall()
+        conn.executemany("UPDATE items SET content=? WHERE id=?", [(html_to_text(r[1]), r[0]) for r in rows])
+        set_setting(conn, "migrated_html_to_text", "1")
     conn.commit()
 
 

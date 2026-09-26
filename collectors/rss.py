@@ -17,6 +17,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from collectors.article import html_to_text
 from pipeline import topic
 
 log = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ def collect() -> list[dict]:
                 "url": link,
                 "author": entry.get("author") or parsed.feed.get("title"),
                 "title": entry.get("title"),
-                "content": content[:5000],
+                "content": html_to_text(content)[:5000],
                 "keyword": keyword,
                 "published_at": _published(entry),
             })

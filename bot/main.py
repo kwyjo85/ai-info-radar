@@ -6,6 +6,7 @@
 - "주제 설정 : <문장>" 또는 /topic <문장> : 수집 주제 변경 (다음 변경까지 유지)
 - "주제 확인" 또는 /topic : 현재 주제 보기
 - 항목별 인라인 버튼: [블루프린트 보기] [구현 진행] [스킵]
+  - 블루프린트가 없으면 버튼을 누를 때 생성 (원문 본문을 가져와 sonnet으로 작성, 1~2분)
   - 구현 진행 → 블루프린트를 tasks/pending/ 으로 복사 (Claude Code 작업 지시용)
 
 실행: uv run python -m bot.main
@@ -37,7 +38,7 @@ from telegram.ext import (
 )
 
 from collectors import storage
-from pipeline import topic
+from pipeline import process, topic
 
 CYCLE_LAUNCHD_LABEL = "com.ai-info-radar.cycle"
 TOPIC_SET_RE = re.compile(r"^\s*주제\s*(?:설정|변경)\s*[:：]\s*(.+)$", re.S)
@@ -296,6 +297,33 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(format_brief_config(cfg))
 
 
+def _make_blueprint(item_id: int) -> Path:
+    """스레드에서 실행 (sqlite 연결은 스레드 간 공유 불가라 여기서 새로 연다)."""
+    conn = storage.connect()
+    try:
+        return process.make_blueprint(conn, item_id, log)
+    finally:
+        conn.close()
+
+
+async def _ensure_blueprint(query, row) -> Path | None:
+    """블루프린트가 있으면 경로, 없으면 지금 생성. 실패하면 사유를 답하고 None."""
+    if row["blueprint_path"] and (ROOT / row["blueprint_path"]).exists():
+        return ROOT / row["blueprint_path"]
+    await query.message.reply_text("블루프린트가 없어 지금 만드는 중입니다… 원문을 읽고 작성하느라 1~2분 걸립니다.")
+    try:
+        return await asyncio.to_thread(_make_blueprint, row["id"])
+    except process.NoBodyError:
+        await query.message.reply_text(
+            "원문 본문을 가져올 수 없어 블루프린트를 만들지 않았습니다 (링크만 있는 글·Google 뉴스 등). "
+            "이 항목은 뉴스로 분류를 바꿨습니다.\n" + row["url"]
+        )
+    except Exception as e:
+        log.exception("요청 블루프린트 생성 실패 (id %d)", row["id"])
+        await query.message.reply_text(f"블루프린트 생성에 실패했습니다: {type(e).__name__}: {e}")
+    return None
+
+
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
@@ -310,15 +338,11 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if action == "bp":
-        if row["blueprint_path"]:
-            text = (ROOT / row["blueprint_path"]).read_text()[:MSG_LIMIT]
-        else:
-            text = "블루프린트가 아직 없습니다 (점수 70 미만이거나 다음 처리 대기 중)."
-        await query.message.reply_text(text)
+        if src := await _ensure_blueprint(query, row):
+            await query.message.reply_text(src.read_text()[:MSG_LIMIT])
 
     elif action == "go":
-        if row["blueprint_path"]:
-            src = ROOT / row["blueprint_path"]
+        if src := await _ensure_blueprint(query, row):
             TASKS_PENDING.mkdir(parents=True, exist_ok=True)
             dst = TASKS_PENDING / src.name
             shutil.copy(src, dst)
@@ -328,8 +352,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 f"구현 작업으로 등록했습니다.\ntasks/pending/{dst.name}\n"
                 "Claude Code에서 이 파일을 열어 구현을 시작하세요."
             )
-        else:
-            await query.message.reply_text("블루프린트가 없어 등록할 수 없습니다.")
 
     elif action == "skip":
         conn.execute("UPDATE items SET status='skipped' WHERE id=?", (item_id,))
