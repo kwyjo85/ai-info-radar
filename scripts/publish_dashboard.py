@@ -5,10 +5,15 @@ site/index.html 및 ig-dashboard와 같은 형식)한 뒤, 임시 디렉토리�
 원격 gh-pages에 force-push 한다. 매 배포가 히스토리를 덮어쓰므로 30분마다 배포해도 저장소가 커지지 않음.
 매 사이클 끝(scripts/cycle.py)에서 호출됨.
 
+화면 파일(site/index.html 등)은 작업 폴더가 아니라 원격 main(origin/main)에 올라간 버전을 쓴다.
+로컬에서 고치는 중인 화면이 사이클 때문에 먼저 공개되지 않도록 — main에 push해야 배포됨.
+--no-push 로컬 빌드(미리보기)는 작업 폴더 파일을 그대로 쓴다.
+
 .env:
   RADAR_SITE_REPO           배포 대상 원격 (기본: 이 저장소의 origin). origin도 없으면 배포 건너뜀
   RADAR_SITE_BRANCH         기본 gh-pages
   RADAR_DASHBOARD_PASSWORD  잠금 비밀번호 (없으면 IG_DASHBOARD_PASSWORD 재사용)
+  RADAR_SITE_REF            화면 파일을 가져올 git ref (기본 origin/main)
 
 실행: uv run python -m scripts.publish_dashboard [--no-push] [--out DIR]
 """
@@ -32,8 +37,7 @@ from dotenv import dotenv_values
 from collectors import storage
 from pipeline import topic
 
-SITE_SRC = ROOT / "site"
-EXTRA_PAGES = [ROOT / "docs" / "architecture.html"]  # 함께 올릴 정적 페이지
+SITE_FILES = ["site/index.html", "docs/architecture.html"]  # 올릴 정적 페이지 (저장소 기준 경로, 첫 번째가 index)
 PBKDF2_ITER = 200_000
 
 log = logging.getLogger("publish")
@@ -81,12 +85,29 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=180)
 
 
-def write_site(out: Path, payload: dict, bundle: dict) -> None:
+def site_files(ref: str | None) -> dict[str, bytes]:
+    """배포할 정적 페이지 {파일명: 내용}. ref가 있으면 그 커밋의 버전, 없으면 작업 폴더 파일."""
+    files = {}
+    for rel in SITE_FILES:
+        if ref:
+            r = subprocess.run(["git", "show", f"{ref}:{rel}"], cwd=ROOT, capture_output=True, timeout=60)
+            if r.returncode != 0:
+                if rel == SITE_FILES[0]:
+                    raise RuntimeError(f"{ref}에 {rel} 없음: {r.stderr.decode().strip()[:200]}")
+                continue
+            data = r.stdout
+        elif (ROOT / rel).exists():
+            data = (ROOT / rel).read_bytes()
+        else:
+            continue
+        files[Path(rel).name] = data
+    return files
+
+
+def write_site(out: Path, payload: dict, bundle: dict, pages: dict[str, bytes]) -> None:
     out.mkdir(parents=True, exist_ok=True)
-    shutil.copy(SITE_SRC / "index.html", out / "index.html")
-    for page in EXTRA_PAGES:
-        if page.exists():
-            shutil.copy(page, out / page.name)
+    for name, data in pages.items():
+        (out / name).write_bytes(data)
     (out / "data.enc.json").write_text(json.dumps(bundle))
     (out / ".nojekyll").touch()
     (out / "README.md").write_text(
@@ -108,6 +129,17 @@ def publish(push: bool = True, out_dir: Path | None = None) -> Path | None:
         log.warning("대시보드 비밀번호 없음(RADAR_DASHBOARD_PASSWORD/IG_DASHBOARD_PASSWORD) — 배포 건너뜀")
         return None
 
+    # 화면 파일은 원격 main 기준: 최신 main을 받아 온 뒤 그 버전을 씀 (fetch 실패 시 마지막으로 받은 main)
+    ref = None
+    if push:
+        ref = (env.get("RADAR_SITE_REF") or "origin/main").strip()
+        remote, _, rbranch = ref.partition("/")
+        if rbranch:
+            r = _git(ROOT, "fetch", "-q", remote, rbranch)
+            if r.returncode != 0:
+                log.warning("fetch 실패 — 마지막으로 받은 %s로 배포: %s", ref, r.stderr.strip()[:200])
+    pages = site_files(ref)
+
     conn = storage.connect()
     payload = build_payload(conn)
     conn.close()
@@ -116,7 +148,7 @@ def publish(push: bool = True, out_dir: Path | None = None) -> Path | None:
     tmp = None
     out = out_dir or Path(tmp := tempfile.mkdtemp(prefix="radar-pages-"))
     try:
-        write_site(out, payload, bundle)
+        write_site(out, payload, bundle, pages)
         if not push:
             log.info("빌드 완료 (push 생략): %s — %d items, %d blueprints", out, len(payload["items"]), len(payload["blueprints"]))
             return out
@@ -129,7 +161,9 @@ def publish(push: bool = True, out_dir: Path | None = None) -> Path | None:
         r = _git(out, "push", "--force", "-q", repo, f"HEAD:refs/heads/{branch}")
         if r.returncode != 0:
             raise RuntimeError(f"push 실패: {r.stderr.strip()[:300]}")
-        log.info("대시보드 배포 완료 → %s (%s): %d items, %d blueprints", repo, branch, len(payload["items"]), len(payload["blueprints"]))
+        site_rev = _git(ROOT, "rev-parse", "--short", ref).stdout.strip()
+        log.info("대시보드 배포 완료 → %s (%s): %d items, %d blueprints, 화면 %s@%s",
+                 repo, branch, len(payload["items"]), len(payload["blueprints"]), ref, site_rev)
         return out
     finally:
         if tmp and push:
