@@ -8,6 +8,8 @@
 - 항목별 인라인 버튼: [블루프린트 보기] [구현 진행] [스킵]
   - 블루프린트가 없으면 버튼을 누를 때 생성 (원문 본문을 가져와 sonnet으로 작성, 1~2분)
   - 구현 진행 → 블루프린트를 tasks/pending/ 으로 복사 (Claude Code 작업 지시용)
+- 이상 알림: 사이클 연속 실패·사이클 지연·파이프라인 하루 비용 초과 시 알림, 해결되면 복구 알림 (bot/health.py)
+- /status 또는 "상태" : 현재 운영 상태 보기
 
 실행: uv run python -m bot.main
 """
@@ -37,6 +39,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot import health
 from collectors import storage
 from pipeline import process, topic
 
@@ -58,6 +61,9 @@ BRIEF_TOP_RE = re.compile(r"^\s*브리핑\s*개수\s*[:：]\s*(\d+)\s*$")
 BRIEF_LIST_RE = re.compile(r"^\s*브리핑\s*목록\s*개수\s*[:：]\s*(\d+)\s*$")
 BRIEF_HOURS_RE = re.compile(r"^\s*브리핑\s*시각\s*[:：]\s*([\d,\s시]+)$")
 BRIEF_SHOW_RE = re.compile(r"^\s*브리핑\s*설정\s*$")
+STATUS_RE = re.compile(r"^\s*상태\s*(?:확인)?\s*$")
+
+HEALTH_CHECK_INTERVAL = 600  # 이상 감지 주기(초)
 
 _ENV = dotenv_values(ROOT / ".env")
 CHAT_ID = int(_ENV["TELEGRAM_CHAT_ID"])
@@ -212,6 +218,37 @@ async def daily_briefing_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_briefing(context)
 
 
+_health_clock = {"last_tick": None, "awake_since": dt.datetime.now()}
+
+
+async def health_check(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """이상 감지 후 알림. 맥이 잠들었다 깨면(점검 간격이 크게 벌어지면) 잠시 지연 판정을 보류한다.
+
+    잠든 동안엔 사이클도 멈추므로, 깨자마자 '사이클 지연'으로 알리면 매번 오경보가 되기 때문.
+    """
+    now = dt.datetime.now()
+    last = _health_clock["last_tick"]
+    if last and (now - last).total_seconds() > HEALTH_CHECK_INTERVAL * 2.5:
+        _health_clock["awake_since"] = now
+        log.info("점검 간격 %d분 — 슬립에서 깨어난 것으로 보고 %d분간 지연 판정 보류",
+                 (now - last).total_seconds() // 60, health.WAKE_GRACE_MIN)
+    _health_clock["last_tick"] = now
+    check_stale = (now - _health_clock["awake_since"]).total_seconds() >= health.WAKE_GRACE_MIN * 60
+    try:
+        messages = await asyncio.to_thread(health.check, now, check_stale)
+    except Exception:
+        log.exception("이상 감지 실패")
+        return
+    for text in messages:
+        await context.bot.send_message(CHAT_ID, text)
+
+
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id != CHAT_ID:
+        return
+    await update.message.reply_text(await asyncio.to_thread(health.status_text))
+
+
 async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_briefing(context)
 
@@ -223,7 +260,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "브리핑 설정 — 시각·개수 보기\n"
         "브리핑 개수 : 10 / 브리핑 목록 개수 : 30 / 브리핑 시각 : 8, 18\n"
         "주제 설정 : <문장> — 수집 주제 변경 (다음 변경까지 유지)\n"
-        "주제 확인 — 현재 주제 보기"
+        "주제 확인 — 현재 주제 보기\n"
+        "상태 — 사이클·비용 현황 보기 (문제가 생기면 자동으로 알림)"
     )
 
 
@@ -292,6 +330,8 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         conn = storage.connect(); cfg = set_brief_config(conn, hours=hours); conn.close()
         await update.message.reply_text("브리핑 시각을 바꿨습니다.\n\n" + format_brief_config(cfg))
+    elif STATUS_RE.match(text):
+        await cmd_status(update, context)
     elif BRIEF_SHOW_RE.match(text):
         conn = storage.connect(); cfg = get_brief_config(conn); conn.close()
         await update.message.reply_text(format_brief_config(cfg))
@@ -374,9 +414,11 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("brief", cmd_brief))
     app.add_handler(CommandHandler("topic", cmd_topic))
+    app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.job_queue.run_repeating(daily_briefing_check, interval=BRIEF_CHECK_INTERVAL, first=10)
+    app.job_queue.run_repeating(health_check, interval=HEALTH_CHECK_INTERVAL, first=60)
 
     log.info("봇 시작 (롱폴링, 브리핑 시각은 settings.brief_config, 기본 %s)", BRIEF_DEFAULTS["hours"])
     app.run_polling(allowed_updates=Update.ALL_TYPES)
