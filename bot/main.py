@@ -10,6 +10,7 @@
   - 구현 진행 → 블루프린트를 tasks/pending/ 으로 복사 (Claude Code 작업 지시용)
 - 이상 알림: 사이클 연속 실패·사이클 지연·파이프라인 하루 비용 초과 시 알림, 해결되면 복구 알림 (bot/health.py)
 - /status 또는 "상태" : 현재 운영 상태 보기
+- /help, "도움말", 또는 알아듣지 못한 말 : 할 수 있는 것 목록
 
 실행: uv run python -m bot.main
 """
@@ -29,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from dotenv import dotenv_values
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -62,6 +63,34 @@ BRIEF_LIST_RE = re.compile(r"^\s*브리핑\s*목록\s*개수\s*[:：]\s*(\d+)\s*
 BRIEF_HOURS_RE = re.compile(r"^\s*브리핑\s*시각\s*[:：]\s*([\d,\s시]+)$")
 BRIEF_SHOW_RE = re.compile(r"^\s*브리핑\s*설정\s*$")
 STATUS_RE = re.compile(r"^\s*상태\s*(?:확인)?\s*$")
+HELP_RE = re.compile(r"^\s*(?:도움말|help|메뉴|명령어?|\?)\s*$", re.I)
+
+HELP_TEXT = (
+    "🤖 AI 레이더 봇으로 할 수 있는 것\n\n"
+    "📰 브리핑\n"
+    "• /brief — 지금 바로 브리핑 받기\n"
+    "• 브리핑 설정 — 받는 시각·개수 보기\n"
+    "• 브리핑 시각 : 8, 18 — 받는 시각 바꾸기\n"
+    "• 브리핑 개수 : 10 — 상세 카드 개수\n"
+    "• 브리핑 목록 개수 : 30 — 제목 목록 개수\n\n"
+    "🎯 수집 주제\n"
+    "• 주제 확인 — 지금 무엇을 모으는지 보기\n"
+    "• 주제 설정 : <문장> — 주제 바꾸기 (예: 주제 설정 : 소상공인 업무 자동화)\n\n"
+    "🩺 운영 상태\n"
+    "• 상태 — 사이클·비용 현황 (문제가 생기면 자동으로 알려드려요)\n\n"
+    "📋 브리핑 카드의 버튼\n"
+    "• [블루프린트 보기] — 구현 계획 보기 (없으면 그 자리에서 작성, 1~2분)\n"
+    "• [구현 진행] — tasks/pending/ 에 작업으로 등록\n"
+    "• [스킵] — 관심 없음 표시\n\n"
+    "언제든 「도움말」 또는 /help 로 이 목록을 다시 볼 수 있어요."
+)
+
+BOT_COMMANDS = [
+    BotCommand("brief", "지금 브리핑 받기"),
+    BotCommand("topic", "현재 수집 주제 보기 (/topic <문장> 으로 변경)"),
+    BotCommand("status", "사이클·비용 현황 보기"),
+    BotCommand("help", "할 수 있는 것 목록"),
+]
 
 HEALTH_CHECK_INTERVAL = 600  # 이상 감지 주기(초)
 
@@ -254,15 +283,8 @@ async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "AI Info Radar 봇입니다.\n"
-        "/brief — 지금 브리핑 받기\n"
-        "브리핑 설정 — 시각·개수 보기\n"
-        "브리핑 개수 : 10 / 브리핑 목록 개수 : 30 / 브리핑 시각 : 8, 18\n"
-        "주제 설정 : <문장> — 수집 주제 변경 (다음 변경까지 유지)\n"
-        "주제 확인 — 현재 주제 보기\n"
-        "상태 — 사이클·비용 현황 보기 (문제가 생기면 자동으로 알림)"
-    )
+    """/start, /help, 「도움말」."""
+    await update.message.reply_text(HELP_TEXT + (f"\n\n🌐 대시보드: {DASHBOARD_URL}" if DASHBOARD_URL else ""))
 
 
 def _kickstart_cycle() -> bool:
@@ -335,6 +357,11 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif BRIEF_SHOW_RE.match(text):
         conn = storage.connect(); cfg = get_brief_config(conn); conn.close()
         await update.message.reply_text(format_brief_config(cfg))
+    elif HELP_RE.match(text):
+        await cmd_start(update, context)
+    else:
+        # 알아듣지 못한 말에는 할 수 있는 것 목록으로 답함
+        await update.message.reply_text("그 말은 아직 알아듣지 못해요. 이런 걸 할 수 있어요 👇\n\n" + HELP_TEXT)
 
 
 def _make_blueprint(item_id: int) -> Path:
@@ -410,8 +437,12 @@ def main():
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    app = Application.builder().token(_ENV["TELEGRAM_BOT_TOKEN"]).build()
-    app.add_handler(CommandHandler("start", cmd_start))
+    async def post_init(application: Application) -> None:
+        # 채팅창에서 「/」를 누르면 뜨는 명령 메뉴
+        await application.bot.set_my_commands(BOT_COMMANDS)
+
+    app = Application.builder().token(_ENV["TELEGRAM_BOT_TOKEN"]).post_init(post_init).build()
+    app.add_handler(CommandHandler(["start", "help"], cmd_start))
     app.add_handler(CommandHandler("brief", cmd_brief))
     app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(CommandHandler("status", cmd_status))
