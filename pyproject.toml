@@ -13,6 +13,7 @@ dependencies = [
     "feedparser>=6.0",
     "youtube-transcript-api>=0.6",
     "cryptography>=50.0.1",
+    "finance-datareader>=0.9.202",
 ]
 
 [tool.uv]

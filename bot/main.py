@@ -10,6 +10,8 @@
   - 구현 진행 → 블루프린트를 tasks/pending/ 으로 복사 (Claude Code 작업 지시용)
 - 이상 알림: 사이클 연속 실패·사이클 지연·파이프라인 하루 비용 초과 시 알림, 해결되면 복구 알림 (bot/health.py)
 - /status 또는 "상태" : 현재 운영 상태 보기
+- 투자 정보 (invest/brief.py, 조회 전용): 「관심 추가 : 삼성전자」 「관심 삭제 : …」 「관심 목록」
+  「투자 브리핑」 또는 /invest, 「투자 브리핑 시각 : 8」 — 관심 종목이 있으면 평일 지정 시각에 자동 전송
 - /help, "도움말", 또는 알아듣지 못한 말 : 할 수 있는 것 목록
 
 실행: uv run python -m bot.main
@@ -42,6 +44,7 @@ from telegram.ext import (
 
 from bot import health
 from collectors import storage
+from invest import brief as invest
 from pipeline import process, topic
 
 CYCLE_LAUNCHD_LABEL = "com.ai-info-radar.cycle"
@@ -63,6 +66,11 @@ BRIEF_LIST_RE = re.compile(r"^\s*브리핑\s*목록\s*개수\s*[:：]\s*(\d+)\s*
 BRIEF_HOURS_RE = re.compile(r"^\s*브리핑\s*시각\s*[:：]\s*([\d,\s시]+)$")
 BRIEF_SHOW_RE = re.compile(r"^\s*브리핑\s*설정\s*$")
 STATUS_RE = re.compile(r"^\s*상태\s*(?:확인)?\s*$")
+INVEST_BRIEF_RE = re.compile(r"^\s*투자\s*브리핑\s*$")
+INVEST_HOURS_RE = re.compile(r"^\s*투자\s*브리핑\s*시각\s*[:：]\s*([\d,\s시]+)$")
+WATCH_ADD_RE = re.compile(r"^\s*관심\s*(?:추가|등록)\s*[:：]\s*(.+)$")
+WATCH_DEL_RE = re.compile(r"^\s*관심\s*(?:삭제|제거)\s*[:：]\s*(.+)$")
+WATCH_SHOW_RE = re.compile(r"^\s*관심\s*(?:목록|종목)?\s*$")
 HELP_RE = re.compile(r"^\s*(?:도움말|help|메뉴|명령어?|\?)\s*$", re.I)
 
 HELP_TEXT = (
@@ -76,6 +84,11 @@ HELP_TEXT = (
     "🎯 수집 주제\n"
     "• 주제 확인 — 지금 무엇을 모으는지 보기\n"
     "• 주제 설정 : <문장> — 주제 바꾸기 (예: 주제 설정 : 소상공인 업무 자동화)\n\n"
+    "📈 투자 정보 (조회 전용 — 매매 판단은 직접)\n"
+    "• 관심 추가 : 삼성전자, AAPL — 관심 종목 추가 (종목명·코드·미국 티커)\n"
+    "• 관심 삭제 : 삼성전자 / 관심 목록\n"
+    "• 투자 브리핑 — 지수·관심 종목 시세·공시·뉴스 지금 받기\n"
+    "• 투자 브리핑 시각 : 8 — 평일 자동 전송 시각\n\n"
     "🩺 운영 상태\n"
     "• 상태 — 사이클·비용 현황 (문제가 생기면 자동으로 알려드려요)\n\n"
     "📋 브리핑 카드의 버튼\n"
@@ -88,6 +101,7 @@ HELP_TEXT = (
 BOT_COMMANDS = [
     BotCommand("brief", "지금 브리핑 받기"),
     BotCommand("topic", "현재 수집 주제 보기 (/topic <문장> 으로 변경)"),
+    BotCommand("invest", "투자 정보 브리핑 받기"),
     BotCommand("status", "사이클·비용 현황 보기"),
     BotCommand("help", "할 수 있는 것 목록"),
 ]
@@ -247,6 +261,80 @@ async def daily_briefing_check(context: ContextTypes.DEFAULT_TYPE) -> None:
     await send_briefing(context)
 
 
+INVEST_CONFIG_KEY = "invest_brief_config"
+INVEST_SENT_KEY = "invest_sent_slots"
+INVEST_DEFAULTS = {"hours": [8]}
+
+
+def get_invest_config(conn) -> dict:
+    cfg = dict(INVEST_DEFAULTS)
+    if raw := storage.get_setting(conn, INVEST_CONFIG_KEY):
+        cfg.update(json.loads(raw))
+    return cfg
+
+
+async def send_invest_brief(context: ContextTypes.DEFAULT_TYPE) -> None:
+    def build():
+        conn = storage.connect()
+        try:
+            return invest.build_brief(conn)
+        finally:
+            conn.close()
+    try:
+        msgs = await asyncio.to_thread(build)
+    except Exception as e:
+        log.exception("투자 브리핑 실패")
+        await context.bot.send_message(CHAT_ID, f"투자 브리핑 생성에 실패했습니다: {type(e).__name__}: {e}")
+        return
+    for m in msgs:
+        await context.bot.send_message(CHAT_ID, m, parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def invest_briefing_check(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """평일 지정 시각에 1회 (관심 종목이 있을 때만). 슬립 대응은 daily_briefing_check와 같은 방식."""
+    now = dt.datetime.now()
+    if now.weekday() >= 5:
+        return
+    today = now.date().isoformat()
+    conn = storage.connect()
+    try:
+        if not invest.get_watchlist(conn):
+            return
+        raw = storage.get_setting(conn, INVEST_SENT_KEY)
+        sent = [s for s in (json.loads(raw) if raw else []) if s.startswith(today)]
+        due = [h for h in get_invest_config(conn)["hours"] if now.hour >= h and f"{today}:{h}" not in sent]
+        if not due:
+            return
+        storage.set_setting(conn, INVEST_SENT_KEY, json.dumps(sent + [f"{today}:{h}" for h in due]))
+    finally:
+        conn.close()
+    log.info("투자 브리핑 전송 (%s)", now.strftime("%H:%M"))
+    await send_invest_brief(context)
+
+
+async def cmd_invest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id != CHAT_ID:
+        return
+    await update.message.reply_text("투자 브리핑을 만드는 중입니다… (종목 수에 따라 수십 초)")
+    await send_invest_brief(context)
+
+
+def _watch_add(texts: list[str]) -> str:
+    conn = storage.connect()
+    out = []
+    try:
+        for t in texts:
+            try:
+                sym, added = invest.add_to_watchlist(conn, t)
+                out.append(f"{'✅ 추가' if added else '· 이미 있음'}: {sym['name']} ({sym['code']})")
+            except ValueError as e:
+                out.append(f"⚠️ {e}")
+        out += ["", invest.format_watchlist(invest.get_watchlist(conn))]
+    finally:
+        conn.close()
+    return "\n".join(out)
+
+
 _health_clock = {"last_tick": None, "awake_since": dt.datetime.now()}
 
 
@@ -352,6 +440,33 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         conn = storage.connect(); cfg = set_brief_config(conn, hours=hours); conn.close()
         await update.message.reply_text("브리핑 시각을 바꿨습니다.\n\n" + format_brief_config(cfg))
+    elif INVEST_BRIEF_RE.match(text):
+        await cmd_invest(update, context)
+    elif m := INVEST_HOURS_RE.match(text):
+        hours = sorted({int(h) for h in re.findall(r"\d+", m.group(1)) if 0 <= int(h) <= 23})
+        if not hours:
+            await update.message.reply_text("시각을 0~23 사이 숫자로 적어주세요. 예) 투자 브리핑 시각 : 8")
+            return
+        conn = storage.connect()
+        storage.set_setting(conn, INVEST_CONFIG_KEY, json.dumps({**get_invest_config(conn), "hours": hours}))
+        conn.close()
+        await update.message.reply_text(
+            "투자 브리핑 시각: 평일 " + ", ".join(f"{h:02d}:00" for h in hours) + " (관심 종목이 있을 때만 전송)"
+        )
+    elif m := WATCH_ADD_RE.match(text):
+        texts = [t for t in re.split(r"[,，\n]", m.group(1)) if t.strip()]
+        await update.message.reply_text("종목을 찾는 중입니다…")
+        await update.message.reply_text(await asyncio.to_thread(_watch_add, texts))
+    elif m := WATCH_DEL_RE.match(text):
+        conn = storage.connect()
+        hit = invest.remove_from_watchlist(conn, m.group(1))
+        items = invest.get_watchlist(conn)
+        conn.close()
+        head = f"삭제했습니다: {hit['name']} ({hit['code']})" if hit else f"「{m.group(1).strip()}」은 관심 목록에 없습니다."
+        await update.message.reply_text(head + "\n\n" + invest.format_watchlist(items))
+    elif WATCH_SHOW_RE.match(text):
+        conn = storage.connect(); items = invest.get_watchlist(conn); conn.close()
+        await update.message.reply_text(invest.format_watchlist(items))
     elif STATUS_RE.match(text):
         await cmd_status(update, context)
     elif BRIEF_SHOW_RE.match(text):
@@ -383,6 +498,11 @@ async def _ensure_blueprint(query, row) -> Path | None:
     except process.NoBodyError:
         await query.message.reply_text(
             "원문 본문을 가져올 수 없어 블루프린트를 만들지 않았습니다 (링크만 있는 글·Google 뉴스 등). "
+            "이 항목은 뉴스로 분류를 바꿨습니다.\n" + row["url"]
+        )
+    except process.NotActionableError as e:
+        await query.message.reply_text(
+            f"검토 결과 원문에 구현할 거리가 없어 블루프린트를 만들지 않았습니다: {e}\n"
             "이 항목은 뉴스로 분류를 바꿨습니다.\n" + row["url"]
         )
     except Exception as e:
@@ -446,9 +566,11 @@ def main():
     app.add_handler(CommandHandler("brief", cmd_brief))
     app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(CommandHandler("status", cmd_status))
+    app.add_handler(CommandHandler("invest", cmd_invest))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.job_queue.run_repeating(daily_briefing_check, interval=BRIEF_CHECK_INTERVAL, first=10)
+    app.job_queue.run_repeating(invest_briefing_check, interval=BRIEF_CHECK_INTERVAL, first=30)
     app.job_queue.run_repeating(health_check, interval=HEALTH_CHECK_INTERVAL, first=60)
 
     log.info("봇 시작 (롱폴링, 브리핑 시각은 settings.brief_config, 기본 %s)", BRIEF_DEFAULTS["hours"])
