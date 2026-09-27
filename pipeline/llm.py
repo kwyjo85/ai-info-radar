@@ -7,8 +7,10 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -38,6 +40,11 @@ CLI_FLAGS = ["--tools", "", "--strict-mcp-config", "--system-prompt", CLI_SYSTEM
 # 블루프린트(sonnet)는 긴 글 작성이라 그대로 둔다.
 NO_THINKING_MODELS = {"haiku"}
 
+# 저장소 안에서 실행하면 Claude Code가 이 프로젝트의 자동 메모리(대화 세션용)를 읽어 채점·블루프린트에 섞는다
+# (2026-09-27 확인: 원문에 없는 '투자 로드맵·신호 기록부'가 블루프린트에 등장). 저장소 밖에서 메모리를 끄고 실행.
+# 부수효과로 입력이 호출당 약 2,400토큰 줄어듦 (2,978 → 593).
+CLI_CWD = tempfile.gettempdir()
+
 
 def _claude_bin() -> str:
     found = shutil.which("claude")
@@ -49,21 +56,22 @@ def _claude_bin() -> str:
     raise RuntimeError("claude CLI를 찾을 수 없습니다. https://claude.ai/install.sh 로 설치하세요.")
 
 
-def _complete_cli(prompt: str, model: str, task: str) -> str:
+def _complete_cli(prompt: str, model: str, task: str, thinking: bool | None = None) -> str:
     env = dict(os.environ)
     # launchd 등 비로그인 환경용: `claude setup-token`으로 발급한 장기 토큰 주입
     oauth_token = _ENV.get("CLAUDE_CODE_OAUTH_TOKEN")
     if oauth_token and not env.get("CLAUDE_CODE_OAUTH_TOKEN"):
         env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
-    if model in NO_THINKING_MODELS:
+    if not (thinking if thinking is not None else model not in NO_THINKING_MODELS):
         env["MAX_THINKING_TOKENS"] = "0"
+    env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     r = subprocess.run(
         [_claude_bin(), "-p", "--model", model, "--output-format", "json", *CLI_FLAGS],
         input=prompt,
         capture_output=True,
         text=True,
         timeout=600,
-        cwd=str(ROOT),
+        cwd=CLI_CWD,
         env=env,
     )
     try:
@@ -102,8 +110,23 @@ def _complete_api(prompt: str, model: str, task: str) -> str:
     return msg.content[0].text.strip()
 
 
-def complete(prompt: str, model: str = "sonnet", task: str = "other") -> str:
-    """model: 'haiku'(저렴/분류용) 또는 'sonnet'(블루프린트용). task: 사용량 기록용 작업 이름."""
+# claude CLI는 로그인 계정 이메일을 시스템 리마인더(userEmail)로 모델에 넘기고, 모델이 블루프린트의
+# "계정 생성" 단계 등에 그 주소를 채워 넣었다 (2026-09-27 확인). 블루프린트는 공개 저장소에 커밋되므로,
+# 입력 프롬프트에 없던 이메일 주소는 출력에서 지운다 (원문에 있던 연락처는 유지).
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _redact_injected_emails(prompt: str, text: str) -> str:
+    return EMAIL_RE.sub(lambda m: m.group(0) if m.group(0) in prompt else "[이메일 삭제]", text)
+
+
+def complete(prompt: str, model: str = "sonnet", task: str = "other", thinking: bool | None = None) -> str:
+    """model: 'haiku'(저렴/분류용) 또는 'sonnet'(블루프린트용). task: 사용량 기록용 작업 이름.
+
+    thinking: None이면 모델 기본값(NO_THINKING_MODELS), True/False로 강제. claude_cli 백엔드에서만 적용.
+    """
     if BACKEND == "api":
-        return _complete_api(prompt, model, task)
-    return _complete_cli(prompt, model, task)
+        text = _complete_api(prompt, model, task)
+    else:
+        text = _complete_cli(prompt, model, task, thinking)
+    return _redact_injected_emails(prompt, text)

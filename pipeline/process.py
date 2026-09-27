@@ -26,6 +26,9 @@ MAX_BLUEPRINTS_PER_RUN = 2
 MAX_BLUEPRINTS_PER_DAY = 5     # 자동 생성 하루 상한 (그날 요청 생성분 포함해 셈)
 MAX_BODY_ATTEMPTS_PER_RUN = 10 # 본문 없는 후보가 강등되며 넘어갈 수 있게, 한 실행에 살펴볼 후보 수
 BLUEPRINT_CONTENT_CHARS = 6000
+DIRECTOR_PASS_SCORE = 75       # 항목별 점수 합이 이 이상이면 continue, 미만이면 redirect (1회 재작성)
+DIRECTOR_LEARNINGS_KEY = "director_learnings"
+DIRECTOR_LEARNINGS_MAX = 6     # 다음 작성 프롬프트에 넣는 최근 지적사항 수
 
 CATEGORIES = ["업무자동화", "AI에이전트", "개발도구", "노코드", "LLM활용", "기타"]
 
@@ -83,13 +86,107 @@ BLUEPRINT_PROMPT = """당신은 AI 자동화 구현 컨설턴트입니다. 아�
 ## 예상 공수 — 시간 단위 추정 + 난이도
 ## 리스크/유의점
 
-마크다운만 출력하세요. 다른 텍스트 금지.
+근거 규칙: 원문에 없는 도구·명령어 옵션·버전·수치를 보태야 할 때는 그 자리에 [추정] 또는 [공식 문서 확인 필요]를
+붙여 원문 근거와 작성자의 추론을 구분하세요. 원문에 없는 기능을 원문의 것처럼 쓰지 마세요.
+사용자의 이메일·이름·회사 등 개인정보는 쓰지 마세요 (필요하면 "본인 이메일"처럼 일반 표현). 이 문서는 공개될 수 있습니다.
 
+마크다운만 출력하세요. 다른 텍스트 금지.
+{extra}
 정보 항목:
 제목: {title}
 출처: {url}
 내용:
 {content}"""
+
+
+# Director 패턴 (RondoFlow 참고): 초안을 원문과 대조해 continue / redirect / conclude 판정.
+DIRECTOR_PROMPT = """당신은 구현 블루프린트 검토자입니다. 아래 [원문]을 근거로 작성된 [블루프린트 초안]을 검토하세요.
+사용자 관심 주제: "{topic}"
+
+항목별로 채점하세요 (합계 100):
+- grounding (0~40): 초안의 도구·기능·수치·저장소 이름이 원문에 있거나 널리 알려진 사실인가.
+  원문에 없는 기능·명령어·수치를 지어냈으면 크게 감점 (지어낸 것 1개당 -10 이상).
+- actionable (0~30): 구현 단계가 명령어·설정·파일 수준으로 따라 할 수 있는가.
+- format (0~15): 필수 섹션(쉽게 말하면, 이걸로 할 수 있는 것, 개요, 구현 가능성, 필요 도구, 구현 단계, 예상 공수, 리스크/유의점)이 모두 있는가.
+- topic_fit (0~15): 관심 주제 관점의 활용이 들어 있는가.
+
+conclude: 원문 자체가 구현할 거리를 주지 않으면 (홍보·소식·의견뿐, 도구/기법 정보 없음) true. 초안의 품질과 무관하게 원문만 보고 판단.
+issues: 이 초안의 구체적 문제 (최대 5개, 각 한 문장)
+instructions: 다시 쓴다면 무엇을 빼고/바꾸고/더할지 구체적 지시
+lesson: 이 초안의 문제 중 "다른 어떤 원문의 블루프린트에도 적용될" 일반 작성 원칙이 있으면 한 문장, 없으면 빈 문자열.
+  (좋은 예: "원문에 없는 CLI 옵션을 추측해 쓰지 말고 '공식 문서 확인 필요'로 표시한다". 나쁜 예: 특정 도구·주제 이름이 들어간 문장)
+
+반드시 아래 형식의 JSON 객체만 출력하세요. 다른 텍스트 금지.
+{{"grounding": 30, "actionable": 20, "format": 15, "topic_fit": 10, "conclude": false, "issues": ["..."], "instructions": "...", "lesson": "", "reason": "판정 이유 한 문장"}}
+
+[원문]
+제목: {title}
+{content}
+
+[블루프린트 초안]
+{draft}"""
+
+
+class NotActionableError(Exception):
+    """Director가 원문에 구현할 거리가 없다고 판정 (항목은 뉴스로 강등됨)."""
+
+
+def parse_json_object(text: str) -> dict:
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError(f"JSON 객체를 찾을 수 없음: {text[:200]}")
+    return json.loads(text[start:end + 1])
+
+
+def direct(conn, title: str, content: str, draft: str) -> dict:
+    """초안 판정 (sonnet). 판정은 모델의 한 단어 답이 아니라 항목별 점수 합으로 정함 (한 단어 판정은 비판과 모순되기 쉬웠음).
+
+    검토 호출이 실패하면 초안을 막지 않도록 continue로 취급.
+    """
+    prompt = DIRECTOR_PROMPT.format(topic=topic.topic_text(conn), title=title, content=content, draft=draft)
+    try:
+        # sonnet: 생각 끈 haiku는 날조를 지적하면서도 고득점을 줬고, 생각 켠 haiku는 sonnet보다 느리고 비쌌음
+        # (2026-09-27, 같은 초안 3건 비교: haiku 83/79/92, haiku+생각 63/70/79 ~100초, sonnet 68/82/92 ~40초)
+        v = parse_json_object(llm.complete(prompt, model="sonnet", task="director"))
+        caps = {"grounding": 40, "actionable": 30, "format": 15, "topic_fit": 15}
+        score = sum(max(0, min(cap, int(v.get(k, 0)))) for k, cap in caps.items())
+    except Exception as e:
+        return {"verdict": "continue", "score": None, "issues": [], "lesson": "",
+                "reason": f"검토 실패로 통과 처리 ({type(e).__name__})"}
+    if v.get("conclude") is True:
+        verdict = "conclude"
+    else:
+        verdict = "continue" if score >= DIRECTOR_PASS_SCORE else "redirect"
+    issues = [str(i).strip()[:150] for i in (v.get("issues") or []) if str(i).strip()][:5]
+    return {"verdict": verdict, "score": score, "issues": issues,
+            "instructions": (v.get("instructions") or "").strip(), "lesson": (v.get("lesson") or "").strip()[:150],
+            "reason": (v.get("reason") or "").strip()}
+
+
+def _learnings(conn) -> list[str]:
+    raw = storage.get_setting(conn, DIRECTOR_LEARNINGS_KEY)
+    return json.loads(raw) if raw else []
+
+
+def _bank_learning(conn, lesson: str) -> None:
+    """redirect 때 Director가 뽑은 '일반 작성 원칙'만 최근순 보관 → 다음 작성 프롬프트에 들어감.
+
+    항목별 지적(issues)은 넣지 않는다: 특정 글에만 맞는 지적이 다른 주제 블루프린트를 오염시켰음.
+    """
+    if not lesson:
+        return
+    merged = [lesson] + [x for x in _learnings(conn) if x != lesson]
+    storage.set_setting(conn, DIRECTOR_LEARNINGS_KEY, json.dumps(merged[:DIRECTOR_LEARNINGS_MAX], ensure_ascii=False))
+
+
+def _blueprint_prompt(conn, title: str, url: str, content: str, fix: dict | None = None) -> str:
+    extra = ""
+    if learned := _learnings(conn):
+        extra += "\n작성 원칙 (지난 검토에서 배운 것):\n" + "\n".join(f"- {x}" for x in learned) + "\n"
+    if fix:
+        extra += ("\n이전 초안이 검토에서 반려되었습니다. 아래 지시에 따라 처음부터 다시 작성하세요.\n"
+                  f"지적사항: {'; '.join(fix['issues'])}\n재작성 지시: {fix['instructions']}\n")
+    return BLUEPRINT_PROMPT.format(topic=topic.topic_text(conn), title=title, url=url, content=content, extra=extra)
 
 
 def setup_logging():
@@ -214,6 +311,7 @@ def make_blueprint(conn, item_id: int, log) -> Path:
     """항목 하나의 블루프린트를 생성해 저장하고 경로를 반환. 이미 있으면 그대로 반환.
 
     본문이 없으면 뉴스로 강등하고 NoBodyError. 텔레그램 봇의 요청 생성에서도 호출됨.
+    초안은 Director(sonnet)가 원문과 대조해 판정: continue 저장 / redirect 1회 재작성 / conclude 강등(NotActionableError).
     """
     row = conn.execute(
         "SELECT id, COALESCE(title_ko, title) AS title, url, content, summary, blueprint_path FROM items WHERE id=?",
@@ -230,16 +328,35 @@ def make_blueprint(conn, item_id: int, log) -> Path:
         raise NoBodyError(row["url"])
 
     title = row["title"] or (row["summary"] or "").split("\n")[0] or f"item-{row['id']}"
-    prompt = BLUEPRINT_PROMPT.format(
-        topic=topic.topic_text(conn), title=title, url=row["url"], content=content[:BLUEPRINT_CONTENT_CHARS]
-    )
-    md = llm.complete(prompt, model="sonnet", task="blueprint")
+    content = content[:BLUEPRINT_CONTENT_CHARS]
+    md = llm.complete(_blueprint_prompt(conn, title, row["url"], content), model="sonnet", task="blueprint")
+    v = direct(conn, title, content, md)
+    log.info("Director 판정 (id %d): %s %s점 — %s", item_id, v["verdict"], v["score"], v["reason"])
+
+    if v["verdict"] == "conclude":
+        _demote_to_news(conn, item_id)
+        raise NotActionableError(v["reason"] or "원문에 구현할 거리가 없음")
+
+    rounds = 1
+    if v["verdict"] == "redirect":
+        _bank_learning(conn, v["lesson"])
+        md2 = llm.complete(_blueprint_prompt(conn, title, row["url"], content, fix=v), model="sonnet", task="blueprint")
+        v2 = direct(conn, title, content, md2)
+        rounds = 2
+        log.info("Director 재판정 (id %d): %s %s점 — %s", item_id, v2["verdict"], v2["score"], v2["reason"])
+        # 재작성본이 더 낮게 나오면 초안 유지 (점수 없으면 재작성본 우선)
+        if v2["score"] is None or v["score"] is None or v2["score"] >= v["score"]:
+            md, v = md2, v2
+
+    note = f"검토: {v['verdict']} · {v['score'] if v['score'] is not None else '-'}점 · {rounds}회 작성"
+    if v["verdict"] != "continue" and v["issues"]:
+        note += "\n⚠️ 남은 지적사항: " + "; ".join(v["issues"])
     BLUEPRINT_DIR.mkdir(exist_ok=True)
     path = BLUEPRINT_DIR / f"{datetime.now():%Y-%m-%d}-{slugify(title)}.md"
-    path.write_text(md + f"\n\n---\n원본: {row['url']}\n")
+    path.write_text(md + f"\n\n---\n원본: {row['url']}\n{note}\n")
     conn.execute("UPDATE items SET blueprint_path=? WHERE id=?", (str(path.relative_to(ROOT)), item_id))
     conn.commit()
-    log.info("블루프린트 생성: %s (항목 id=%d)", path.name, item_id)
+    log.info("블루프린트 생성: %s (항목 id=%d, %s)", path.name, item_id, note.split("\n")[0])
     return path
 
 
@@ -269,6 +386,9 @@ def generate_blueprints(conn, log) -> int:
         except NoBodyError as e:
             demoted += 1
             log.info("본문 없음 → 뉴스로 강등, 블루프린트 생략 (id %d, %.80s)", r["id"], str(e))
+        except NotActionableError as e:
+            demoted += 1
+            log.info("Director conclude → 뉴스로 강등, 블루프린트 생략 (id %d: %s)", r["id"], e)
         except Exception:
             log.exception("블루프린트 생성 실패 (id %d)", r["id"])
     if demoted:
