@@ -12,6 +12,8 @@
 - /status 또는 "상태" : 현재 운영 상태 보기
 - 투자 정보 (invest/brief.py, 조회 전용): 「관심 추가 : 삼성전자」 「관심 삭제 : …」 「관심 목록」
   「투자 브리핑」 또는 /invest, 「투자 브리핑 시각 : 8」 — 관심 종목이 있으면 평일 지정 시각에 자동 전송
+- 신호 기록부 (invest/signals.py): 브리핑 때 규칙 신호 기록·5/20거래일 뒤 채점. 「신호 통계」 /signals,
+  「신호 목록」 「신호 규칙」 「신호 끄기 : 3」 「신호 켜기 : 3」
 - /help, "도움말", 또는 알아듣지 못한 말 : 할 수 있는 것 목록
 
 실행: uv run python -m bot.main
@@ -45,6 +47,7 @@ from telegram.ext import (
 from bot import health
 from collectors import storage
 from invest import brief as invest
+from invest import signals
 from pipeline import process, topic
 
 CYCLE_LAUNCHD_LABEL = "com.ai-info-radar.cycle"
@@ -71,6 +74,10 @@ INVEST_HOURS_RE = re.compile(r"^\s*투자\s*브리핑\s*시각\s*[:：]\s*([\d,\
 WATCH_ADD_RE = re.compile(r"^\s*관심\s*(?:추가|등록)\s*[:：]\s*(.+)$")
 WATCH_DEL_RE = re.compile(r"^\s*관심\s*(?:삭제|제거)\s*[:：]\s*(.+)$")
 WATCH_SHOW_RE = re.compile(r"^\s*관심\s*(?:목록|종목)?\s*$")
+SIGNAL_STATS_RE = re.compile(r"^\s*신호\s*(?:통계|기록부|기록)?\s*$")
+SIGNAL_LIST_RE = re.compile(r"^\s*신호\s*목록\s*$")
+SIGNAL_RULES_RE = re.compile(r"^\s*신호\s*규칙\s*$")
+SIGNAL_TOGGLE_RE = re.compile(r"^\s*신호\s*(켜기|끄기)\s*[:：]\s*(.+)$")
 HELP_RE = re.compile(r"^\s*(?:도움말|help|메뉴|명령어?|\?)\s*$", re.I)
 
 HELP_TEXT = (
@@ -88,7 +95,9 @@ HELP_TEXT = (
     "• 관심 추가 : 삼성전자, AAPL — 관심 종목 추가 (종목명·코드·미국 티커)\n"
     "• 관심 삭제 : 삼성전자 / 관심 목록\n"
     "• 투자 브리핑 — 지수·관심 종목 시세·공시·뉴스 지금 받기\n"
-    "• 투자 브리핑 시각 : 8 — 평일 자동 전송 시각\n\n"
+    "• 투자 브리핑 시각 : 8 — 평일 자동 전송 시각\n"
+    "• 신호 통계 — 신호 기록부 누적 결과 (5·20거래일 뒤 자동 채점)\n"
+    "• 신호 목록 / 신호 규칙 / 신호 끄기 : 3 / 신호 켜기 : 3\n\n"
     "🩺 운영 상태\n"
     "• 상태 — 사이클·비용 현황 (문제가 생기면 자동으로 알려드려요)\n\n"
     "📋 브리핑 카드의 버튼\n"
@@ -102,6 +111,7 @@ BOT_COMMANDS = [
     BotCommand("brief", "지금 브리핑 받기"),
     BotCommand("topic", "현재 수집 주제 보기 (/topic <문장> 으로 변경)"),
     BotCommand("invest", "투자 정보 브리핑 받기"),
+    BotCommand("signals", "신호 기록부 통계"),
     BotCommand("status", "사이클·비용 현황 보기"),
     BotCommand("help", "할 수 있는 것 목록"),
 ]
@@ -319,6 +329,13 @@ async def cmd_invest(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await send_invest_brief(context)
 
 
+async def cmd_signals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_chat.id != CHAT_ID:
+        return
+    conn = storage.connect(); text = signals.format_stats(conn); conn.close()
+    await update.message.reply_text(text)
+
+
 def _watch_add(texts: list[str]) -> str:
     conn = storage.connect()
     out = []
@@ -464,6 +481,22 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         conn.close()
         head = f"삭제했습니다: {hit['name']} ({hit['code']})" if hit else f"「{m.group(1).strip()}」은 관심 목록에 없습니다."
         await update.message.reply_text(head + "\n\n" + invest.format_watchlist(items))
+    elif SIGNAL_STATS_RE.match(text):
+        await cmd_signals(update, context)
+    elif SIGNAL_LIST_RE.match(text):
+        conn = storage.connect(); out = signals.format_recent(conn); conn.close()
+        await update.message.reply_text(out)
+    elif SIGNAL_RULES_RE.match(text):
+        conn = storage.connect(); out = signals.format_rules(conn); conn.close()
+        await update.message.reply_text(out)
+    elif m := SIGNAL_TOGGLE_RE.match(text):
+        conn = storage.connect()
+        rid = signals.set_rule_enabled(conn, m.group(2), m.group(1) == "켜기")
+        out = signals.format_rules(conn)
+        conn.close()
+        head = (f"{signals.RULES[rid][0]} 규칙을 {'켰' if m.group(1) == '켜기' else '껐'}습니다. (이미 기록된 신호는 그대로 둡니다)"
+                if rid else f"「{m.group(2).strip()}」 규칙을 찾지 못했습니다. 번호로 적어주세요.")
+        await update.message.reply_text(head + "\n\n" + out)
     elif WATCH_SHOW_RE.match(text):
         conn = storage.connect(); items = invest.get_watchlist(conn); conn.close()
         await update.message.reply_text(invest.format_watchlist(items))
@@ -567,6 +600,7 @@ def main():
     app.add_handler(CommandHandler("topic", cmd_topic))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("invest", cmd_invest))
+    app.add_handler(CommandHandler("signals", cmd_signals))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.job_queue.run_repeating(daily_briefing_check, interval=BRIEF_CHECK_INTERVAL, first=10)

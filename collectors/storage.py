@@ -34,6 +34,22 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS idx_items_status ON items(status);
 CREATE INDEX IF NOT EXISTS idx_items_score ON items(score);
 
+-- 투자 신호 기록부 (invest/signals.py): 관심 종목의 규칙 신호를 기록하고 N거래일 뒤 결과를 채점
+CREATE TABLE IF NOT EXISTS signals (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule          TEXT NOT NULL,
+    direction     TEXT NOT NULL,            -- up (상승 예상) | down (하락 예상)
+    code          TEXT NOT NULL,
+    name          TEXT,
+    market        TEXT NOT NULL,            -- KR | US
+    signal_date   TEXT NOT NULL,            -- 신호가 난 봉(일봉) 날짜
+    price         REAL NOT NULL,            -- 그 봉 종가 (수익률 기준가)
+    detected_at   TEXT NOT NULL,
+    ret_5d        REAL, bench_5d  REAL,     -- 5거래일 뒤 종목·벤치마크 수익률 (%)
+    ret_20d       REAL, bench_20d REAL,     -- 20거래일 뒤
+    UNIQUE(rule, code, signal_date)
+);
+
 -- 런타임 설정 (현재 수집 주제 등). 텔레그램에서 바꾸고 수집기/처리기가 읽음.
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,

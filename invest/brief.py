@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 from dotenv import dotenv_values
 
 from collectors import storage
+from invest import signals
 
 log = logging.getLogger("invest")
 
@@ -99,7 +100,7 @@ def add_to_watchlist(conn, text: str) -> tuple[dict, bool]:
         return sym, False
     if len(items) >= WATCHLIST_MAX:
         raise ValueError(f"관심 종목은 최대 {WATCHLIST_MAX}개까지입니다.")
-    items.append(sym)
+    items.append({**sym, "added": dt.date.today().isoformat()})   # 신호 기록부는 추가일 이후 신호만 기록
     _save_watchlist(conn, items)
     return sym, True
 
@@ -280,6 +281,13 @@ def build_brief(conn) -> list[str]:
             section += [f"• {_link(n['title'], n['url'])}" for n in ns]
         if section:
             detail_msgs.append(f"🔎 <b>{html.escape(it['name'])} ({it['code']})</b>\n" + "\n".join(section))
+
+    try:
+        new_signals, done = signals.run(conn, items)
+        lines += signals.format_brief_section(new_signals, done)
+    except Exception as e:
+        log.exception("신호 기록부 실패")
+        lines += ["", f"신호 기록부: [미확인: {type(e).__name__}]"]
 
     if dart_note:
         lines += ["", dart_note]
