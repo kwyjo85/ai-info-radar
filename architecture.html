@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Info Radar — 시스템 구조도</title>
+<style>
+  :root {
+    --bg: #0f1219;
+    --panel: #171c26;
+    --card: #1f2633;
+    --border: #2e3a4e;
+    --text: #dce3ee;
+    --muted: #8494ab;
+    --blue: #4c9aff;
+    --green: #3fb976;
+    --amber: #e8b339;
+    --purple: #a78bfa;
+    --red: #ef7070;
+    --pink: #f472b6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Pro KR", "Apple SD Gothic Neo", Pretendard, sans-serif;
+    padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 26px; letter-spacing: -0.5px; }
+  h1 .dot { color: var(--blue); }
+  .sub { color: var(--muted); margin: 6px 0 32px; font-size: 14px; }
+
+  .stage {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+    margin-bottom: 0;
+  }
+  .stage-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .badge {
+    font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 20px;
+    color: #0f1219;
+  }
+  .stage-title { font-size: 16px; font-weight: 700; }
+  .stage-meta { margin-left: auto; font-size: 12px; color: var(--muted); background: var(--card); padding: 3px 10px; border-radius: 6px; border: 1px solid var(--border);}
+
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; flex: 1; min-width: 200px;
+  }
+  .card h4 { font-size: 13px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .card p, .card li { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .card ul { list-style: none; }
+  .card li::before { content: "· "; color: var(--blue); }
+  .card .file { color: var(--amber); font-family: "SF Mono", Menlo, monospace; font-size: 11px; }
+  .off { opacity: 0.55; border-style: dashed; }
+  .tag { font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; }
+  .tag.pause { background: #3a3320; color: var(--amber); }
+  .tag.live { background: #1d3a2a; color: var(--green); }
+
+  .arrow { display: flex; flex-direction: column; align-items: center; padding: 8px 0; color: var(--muted); }
+  .arrow .line { width: 2px; height: 18px; background: linear-gradient(var(--border), var(--blue)); }
+  .arrow .tip { font-size: 14px; color: var(--blue); margin-top: -4px; }
+  .arrow .label {
+    font-size: 11px; color: var(--muted); background: var(--bg);
+    border: 1px solid var(--border); padding: 2px 10px; border-radius: 12px; margin: 4px 0;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+
+  .db {
+    background: linear-gradient(180deg, #1c2a3f, #16202f);
+    border: 1px solid #33507a; border-radius: 12px; padding: 14px 18px;
+    display: flex; align-items: center; gap: 14px; margin: 0;
+  }
+  .db .cyl { font-size: 26px; }
+  .db h4 { font-size: 14px; color: var(--blue); }
+  .db p { font-size: 12px; color: var(--muted); font-family: "SF Mono", Menlo, monospace; margin-top: 3px;}
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } }
+
+  .flow {
+    margin-top: 36px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px 22px;
+  }
+  .flow h3 { font-size: 15px; margin-bottom: 16px; }
+  .pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border); background: var(--card);
+  }
+  .pill.s1 { border-color: var(--muted); }
+  .pill.s2 { border-color: var(--blue); color: var(--blue); }
+  .pill.s3 { border-color: var(--amber); color: var(--amber); }
+  .pill.s4 { border-color: var(--green); color: var(--green); }
+  .pill.s5 { border-color: var(--red); color: var(--red); }
+  .pills .fa { color: var(--muted); font-size: 13px; }
+
+  .legend { margin-top: 24px; display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  footer { margin-top: 28px; font-size: 11px; color: var(--muted); text-align: center; }
+  code { font-family: "SF Mono", Menlo, monospace; font-size: 11px; color: var(--pink); }
+
+  .toc { display: flex; gap: 10px; margin-bottom: 28px; }
+  .toc a {
+    color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
+    background: var(--card); border: 1px solid var(--border);
+    padding: 7px 16px; border-radius: 20px;
+  }
+  .toc a:hover { border-color: var(--blue); color: var(--blue); }
+
+  section.doc {
+    margin-top: 48px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 26px 28px;
+  }
+  section.doc h2 { font-size: 20px; margin-bottom: 6px; }
+  section.doc h2 .badge { vertical-align: middle; margin-right: 8px; }
+  section.doc > p.lead { color: var(--muted); font-size: 13px; line-height: 1.7; margin-bottom: 20px; }
+  section.doc h3 { font-size: 15px; margin: 22px 0 10px; color: var(--blue); }
+  section.doc p, section.doc li, section.doc td, section.doc th { font-size: 13px; line-height: 1.8; color: var(--text); }
+  section.doc ul, section.doc ol { padding-left: 22px; }
+  section.doc li::marker { color: var(--blue); }
+  section.doc table { width: 100%; border-collapse: collapse; margin: 8px 0 4px; }
+  section.doc th { text-align: left; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--border); padding: 6px 10px; }
+  section.doc td { border-bottom: 1px solid var(--border); padding: 8px 10px; vertical-align: top; }
+  section.doc pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; margin: 8px 0;
+  }
+  section.doc pre code { color: var(--green); font-size: 12px; }
+  .note {
+    background: #2a2417; border: 1px solid #4d4020; border-radius: 8px;
+    padding: 10px 14px; font-size: 12.5px; color: var(--amber); margin: 10px 0;
+  }
+  kbd {
+    background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+    padding: 1px 6px; font-size: 11px; font-family: "SF Mono", Menlo, monospace;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>AI Info Radar <span class="dot">●</span></h1>
+  <p class="sub">AI 업무 자동화 정보 수집 → Claude 분류·블루프린트 → 텔레그램 브리핑 — MacBook 상시 구동 (launchd)</p>
+
+  <nav class="toc">
+    <a href="#diagram">구조도</a>
+    <a href="#about">시스템 설명</a>
+    <a href="#manual">사용자 매뉴얼</a>
+  </nav>
+
+  <div id="diagram"></div>
+
+  <!-- ① 수집 -->
+  <div class="stage">
+    <div class="stage-head">
+      <span class="badge" style="background:var(--blue)">① 수집</span>
+      <span class="stage-title">Collectors</span>
+      <span class="stage-meta">launchd · 30분마다 (com.ai-info-radar.cycle)</span>
+    </div>
+    <div class="row">
+      <div class="card off">
+        <h4>Threads <span class="tag pause">심사 대기</span></h4>
+        <p class="file">collectors/threads.py</p>
+        <ul>
+          <li>keyword_search · 키워드 25개</li>
+          <li>App Review 승인 후 자동 활성화</li>
+          <li>토큰 60일 · 만료 7일 전 자동 갱신</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>RSS <span class="tag live">동작 중</span></h4>
+        <p class="file">collectors/rss.py</p>
+        <ul>
+          <li>config/feeds.yaml 피드 목록</li>
+          <li>simonwillison · HN 검색 피드 등</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>YouTube <span class="tag live">대기 (채널 미등록)</span></h4>
+        <p class="file">collectors/youtube.py</p>
+        <ul>
+          <li>채널 RSS + 자막 수집</li>
+          <li>API 키 불필요</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="line"></div><div class="label">url 기준 중복 제거 (upsert)</div><div class="tip">▼</div></div>
+
+  <!-- DB -->
+  <div class="db">
+    <span class="cyl">🗄️</span>
+    <div>
+      <h4>SQLite — data/radar.db</h4>
+      <p>items: url · content · keyword · score · category · summary · blueprint_path · status</p>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="line"></div><div class="label">status = 'new'</div><div class="tip">▼</div></div>
+
+  <!-- ② 처리 -->
+  <div class="stage">
+    <div class="stage-head">
+      <span class="badge" style="background:var(--purple)">② 처리</span>
+      <span class="stage-title">Pipeline (Claude)</span>
+      <span class="stage-meta">같은 사이클에서 이어 실행</span>
+    </div>
+    <div class="row">
+      <div class="card">
+        <h4>점수 · 분류 · 3줄 요약</h4>
+        <p class="file">pipeline/process.py → llm.py</p>
+        <ul>
+          <li>claude CLI 헤드리스 · <b style="color:var(--purple)">haiku</b></li>
+          <li>10건 배치 · 실행당 최대 30건</li>
+          <li>관련도 0~100점 + 카테고리 6종</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>구현 블루프린트 (score ≥ 70)</h4>
+        <p class="file">blueprints/YYYY-MM-DD-슬러그.md</p>
+        <ul>
+          <li>claude CLI 헤드리스 · <b style="color:var(--purple)">sonnet</b> · 실행당 5건</li>
+          <li>개요 · 가능성 · 도구 · 단계 · 공수 · 리스크</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>LLM 백엔드 추상화</h4>
+        <p class="file">pipeline/llm.py</p>
+        <ul>
+          <li>기본: 구독 기반 CLI (비용 0원)</li>
+          <li><code>LLM_BACKEND=api</code>로 API 전환 가능</li>
+          <li>launchd용 OAuth 토큰 주입 (.env)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"><div class="line"></div><div class="label">status = 'processed'</div><div class="tip">▼</div></div>
+
+  <!-- ③④ 브리핑/열람 -->
+  <div class="split">
+    <div class="stage" style="margin:0">
+      <div class="stage-head">
+        <span class="badge" style="background:var(--green)">③ 브리핑</span>
+        <span class="stage-title">Telegram Bot</span>
+        <span class="stage-meta">상시 (KeepAlive)</span>
+      </div>
+      <div class="card" style="min-width:auto">
+        <h4>bot/main.py — 롱폴링 (공인 IP 불필요)</h4>
+        <ul>
+          <li>매일 08:00 상위 5건 자동 브리핑</li>
+          <li><code>/brief</code> 즉시 브리핑</li>
+          <li>버튼: [블루프린트 보기] [구현 진행] [스킵]</li>
+          <li>구현 진행 → <span class="file">tasks/pending/*.md</span> → Claude Code 착수</li>
+        </ul>
+      </div>
+    </div>
+    <div class="stage" style="margin:0">
+      <div class="stage-head">
+        <span class="badge" style="background:var(--amber)">④ 열람</span>
+        <span class="stage-title">Dashboard</span>
+        <span class="stage-meta">수동 · localhost:8501</span>
+      </div>
+      <div class="card" style="min-width:auto">
+        <h4>dashboard/app.py — Streamlit</h4>
+        <ul>
+          <li>피드: 카드 + 점수배지 + 원문/블루프린트 확장</li>
+          <li>필터: 소스·상태·카테고리·최소점수 / 정렬·페이지</li>
+          <li>테이블 · 블루프린트 열람 탭</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 상태 흐름 -->
+  <div class="flow">
+    <h3>항목 상태 흐름</h3>
+    <div class="pills">
+      <span class="pill s1">new<br><small>수집됨</small></span>
+      <span class="fa">→</span>
+      <span class="pill s2">processed<br><small>점수·요약</small></span>
+      <span class="fa">→</span>
+      <span class="pill s3">briefed<br><small>브리핑 전송</small></span>
+      <span class="fa">→</span>
+      <span class="pill s4">approved<br><small>구현 승인 → tasks/pending</small></span>
+      <span class="fa">/</span>
+      <span class="pill s5">skipped<br><small>스킵</small></span>
+    </div>
+    <div class="legend">
+      <span><span class="swatch" style="background:var(--blue)"></span>수집 (30분)</span>
+      <span><span class="swatch" style="background:var(--purple)"></span>Claude 처리</span>
+      <span><span class="swatch" style="background:var(--green)"></span>텔레그램 (상시)</span>
+      <span><span class="swatch" style="background:var(--amber)"></span>대시보드 (수동)</span>
+      <span>🔒 비밀값: .env (Threads·텔레그램·Claude 토큰, gitignore)</span>
+      <span>📝 로그: logs/*.log</span>
+    </div>
+  </div>
+
+  <!-- 시스템 설명 -->
+  <section class="doc" id="about">
+    <h2><span class="badge" style="background:var(--blue)">DOC</span>시스템 설명</h2>
+    <p class="lead">
+      AI Info Radar는 "AI 기반 업무 효율화·자동화" 관련 정보를 자동으로 수집·선별해서,
+      실제로 구현할 가치가 있는 것만 골라 매일 아침 텔레그램으로 물어보는 개인용 정보 레이더입니다.
+      집 MacBook에서 30분 배치로 조용히 돌아가며, 사람이 하는 일은 아침 브리핑에서 버튼 하나 누르는 것뿐입니다.
+    </p>
+
+    <h3>무엇을 해결하나</h3>
+    <ul>
+      <li><b>정보 과잉</b> — RSS·Threads·YouTube에 흩어진 AI 자동화 소식을 일일이 찾아볼 필요 없음</li>
+      <li><b>선별 피로</b> — Claude가 관련도 0~100점으로 채점하고 3줄로 요약. 70점 이상만 눈에 들어옴</li>
+      <li><b>"그래서 어떻게 만들지?"</b> — 고득점 항목은 필요 도구·단계·공수가 담긴 구현 블루프린트가 자동 생성됨</li>
+      <li><b>실행 연결</b> — 텔레그램에서 [구현 진행]을 누르면 Claude Code 작업 지시 파일로 변환되어 바로 개발 착수 가능</li>
+    </ul>
+
+    <h3>설계 원칙</h3>
+    <ul>
+      <li><b>비용 0원 우선</b> — LLM 호출은 Claude 구독(CLI 헤드리스)을 사용. 필요 시 <code>LLM_BACKEND=api</code> 한 줄로 API 전환</li>
+      <li><b>공인 IP 불필요</b> — 텔레그램 롱폴링 방식이라 포트포워딩·서버 없이 집 맥북으로 충분</li>
+      <li><b>사용량 보호</b> — 실행당 점수 30건·블루프린트 5건 상한으로 구독 한도를 지킴</li>
+      <li><b>자동 복구</b> — 봇은 KeepAlive로 크래시·재부팅 시 자동 재시작, Threads 토큰(60일)은 만료 전 자동 갱신</li>
+      <li><b>보안</b> — 모든 토큰은 .env에만 저장(gitignore), 로그에 토큰이 남지 않도록 차단</li>
+    </ul>
+
+    <h3>구성 요소 한눈에</h3>
+    <table>
+      <tr><th>구성</th><th>역할</th><th>실행 방식</th></tr>
+      <tr><td>수집기 (collectors/)</td><td>Threads·RSS·YouTube → SQLite, URL 중복 제거</td><td>launchd 30분</td></tr>
+      <tr><td>처리기 (pipeline/)</td><td>haiku로 채점·요약 → 70점 이상 sonnet 블루프린트</td><td>수집 직후 연속 실행</td></tr>
+      <tr><td>텔레그램 봇 (bot/)</td><td>08:00 브리핑 + 인라인 버튼 응답</td><td>launchd 상시</td></tr>
+      <tr><td>대시보드 (dashboard/)</td><td>전체 항목·점수·블루프린트 열람</td><td>필요할 때 수동</td></tr>
+    </table>
+  </section>
+
+  <!-- 사용자 매뉴얼 -->
+  <section class="doc" id="manual">
+    <h2><span class="badge" style="background:var(--green)">GUIDE</span>사용자 매뉴얼</h2>
+    <p class="lead">평소에는 아무것도 안 해도 됩니다. 아래는 일상 사용법과 필요할 때 찾아 쓰는 명령 모음입니다.</p>
+
+    <h3>1. 매일 아침 루틴 (유일한 일상 업무)</h3>
+    <ol>
+      <li>08:00에 텔레그램(@ai_info_radar_bot)으로 상위 5건 브리핑이 도착</li>
+      <li>각 항목의 버튼으로 결정:
+        <ul>
+          <li><b>[블루프린트 보기]</b> — 구현 계획 전문을 채팅으로 받아봄</li>
+          <li><b>[구현 진행]</b> — <code>tasks/pending/</code>에 작업 파일 저장됨. Claude Code를 열고 해당 파일로 구현 시작</li>
+          <li><b>[스킵]</b> — 관심 없음 처리</li>
+        </ul>
+      </li>
+      <li>지금 당장 브리핑을 받고 싶으면 봇에게 <kbd>/brief</kbd> 전송</li>
+    </ol>
+
+    <h3>2. 대시보드 보기</h3>
+    <pre><code>cd ~/Documents/cocobaby/ai-info-radar
+uv run streamlit run dashboard/app.py</code></pre>
+    <p>브라우저에서 <code>http://localhost:8501</code> — 피드(카드)·테이블·블루프린트 탭, 사이드바에서 점수/카테고리 필터.</p>
+
+    <h3>3. 수집 소스 편집</h3>
+    <table>
+      <tr><th>파일</th><th>내용</th></tr>
+      <tr><td><code>config/keywords.yaml</code></td><td>Threads 검색 키워드 (심사 통과 후 사용됨)</td></tr>
+      <tr><td><code>config/feeds.yaml</code></td><td>RSS 피드 URL 목록, YouTube 채널 ID 목록</td></tr>
+    </table>
+    <p>저장만 하면 다음 30분 사이클부터 자동 반영. YouTube 채널 ID는 채널 페이지 → 더보기 → 채널 공유 → 채널 ID 복사.</p>
+
+    <h3>4. 수동 실행 명령 모음</h3>
+    <pre><code># 지금 즉시 수집+처리 한 사이클 돌리기
+uv run python -m scripts.cycle
+
+# 수집만 / 처리만
+uv run python -m collectors.run
+uv run python -m pipeline.process
+
+# Threads 토큰 재발급(60일) / 수동 갱신
+uv run python scripts/threads_auth.py auth
+uv run python scripts/threads_auth.py refresh</code></pre>
+
+    <h3>5. 자동화(launchd) 관리</h3>
+    <pre><code># 상태 확인 (PID가 보이면 실행 중)
+launchctl list | grep ai-info-radar
+
+# 사이클 즉시 실행
+launchctl kickstart gui/$(id -u)/com.ai-info-radar.cycle
+
+# 중지 / 재시작 (봇)
+launchctl bootout gui/$(id -u)/com.ai-info-radar.bot
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ai-info-radar.bot.plist</code></pre>
+
+    <h3>6. 로그 확인 (문제 생겼을 때 제일 먼저)</h3>
+    <table>
+      <tr><th>파일</th><th>내용</th></tr>
+      <tr><td><code>logs/launchd.cycle.log</code></td><td>30분 사이클 전체 (수집+처리)</td></tr>
+      <tr><td><code>logs/launchd.bot.log</code></td><td>텔레그램 봇</td></tr>
+      <tr><td><code>logs/collect.log</code> / <code>process.log</code></td><td>수집 / 처리 개별 로그</td></tr>
+    </table>
+
+    <h3>7. 자주 겪는 문제</h3>
+    <table>
+      <tr><th>증상</th><th>원인 · 해결</th></tr>
+      <tr><td>브리핑이 안 옴</td><td>맥북이 잠들어 있음 → 전원 연결 + 배터리 설정에서 자동 잠자기 끄기, 또는 <code>caffeinate -s</code></td></tr>
+      <tr><td>처리 로그에 "claude CLI 실패"</td><td>OAuth 토큰 만료 → 터미널에서 <code>claude setup-token</code> 재발급 후 .env의 <code>CLAUDE_CODE_OAUTH_TOKEN</code> 교체</td></tr>
+      <tr><td>threads "권한 없음" 경고</td><td>정상 (App Review 승인 전). 심사 통과하면 자동 활성화</td></tr>
+      <tr><td>봇이 응답 없음</td><td><code>launchctl list</code>로 확인 → 위 5번 명령으로 재시작</td></tr>
+      <tr><td>Threads 토큰 만료(60일)</td><td>사이클이 자동 갱신하지만, 60일 이상 완전히 꺼두었다면 <code>auth</code>로 재발급</td></tr>
+    </table>
+
+    <div class="note">
+      ⚠️ 유일한 정기 관리 포인트: 맥북이 <b>전원 연결 + 슬립 방지</b> 상태인지, 그리고 텔레그램 브리핑이 매일 오는지만 확인하면 됩니다.
+      브리핑이 이틀 연속 안 오면 logs/launchd.cycle.log부터 보세요.
+    </div>
+  </section>
+
+  <footer>ai-info-radar · 2026-09-22 기준 · launchd: com.ai-info-radar.{cycle, bot}</footer>
+</div>
+</body>
+</html>
