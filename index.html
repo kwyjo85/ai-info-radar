@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Info Radar</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#181b22; --line:#262a33; --text:#e6e8ee; --muted:#8b91a1; --accent:#7c9cff; --green:#3ec38b; --amber:#f5b041; --red:#f06a6a; --purple:#a78bfa; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard",sans-serif; background:var(--bg); color:var(--text); }
+  a { color:var(--accent); }
+  header { padding:18px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:19px; }
+  header .meta { color:var(--muted); font-size:13px; line-height:1.5; }
+  header .topic { color:var(--text); font-weight:600; }
+  main { padding:18px 24px; max-width:1200px; margin:0 auto; }
+  @media (max-width:800px) { header, main { padding:12px; } }
+  .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:16px; }
+  .metric { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .metric .n { font-size:22px; font-weight:700; }
+  .metric .l { font-size:12px; color:var(--muted); }
+  .tabs { display:flex; gap:6px; margin-bottom:12px; }
+  .tab { padding:7px 14px; border-radius:20px; background:var(--card); border:1px solid var(--line); cursor:pointer; font-size:13px; }
+  .tab.active { border-color:var(--accent); color:var(--accent); }
+  .filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  select, input[type=search], button { background:#222634; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font-size:13px; }
+  input[type=search] { min-width:200px; flex:1; }
+  input[type=range] { width:110px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:8px; }
+  .card.dim { opacity:.55; }
+  .card .top { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .card h3 { margin:0; font-size:15px; line-height:1.4; }
+  .card h3 .orig { font-size:11px; color:var(--muted); font-weight:400; margin-top:2px; }
+  .score { font-size:20px; font-weight:800; white-space:nowrap; }
+  .score.hi { color:var(--green); } .score.mid { color:var(--amber); } .score.lo { color:var(--red); }
+  .tags { display:flex; flex-wrap:wrap; gap:5px; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:999px; background:#222634; color:var(--muted); }
+  .tag.kind-구현 { color:var(--green); } .tag.kind-뉴스 { color:var(--amber); } .tag.src { color:var(--accent); } .tag.bp { color:var(--purple); }
+  .summary { font-size:13px; color:var(--text); line-height:1.6; white-space:pre-line; }
+  .easy { font-size:14px; line-height:1.65; background:#1d2333; border-left:3px solid var(--accent); padding:8px 10px; border-radius:6px; }
+  .uses { font-size:13px; line-height:1.6; }
+  .uses .h { color:var(--amber); font-weight:600; font-size:12px; margin-bottom:3px; }
+  .uses ul { margin:0; padding-left:18px; } .uses li { margin:2px 0; }
+  .noeasy { font-size:12px; color:var(--muted); font-style:italic; }
+  .foot { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:var(--muted); gap:8px; flex-wrap:wrap; }
+  .foot button { padding:5px 10px; font-size:12px; }
+  .bp { margin-top:6px; border-top:1px solid var(--line); padding-top:10px; font-size:13px; line-height:1.65; }
+  .bp h1 { font-size:16px; } .bp h2 { font-size:14px; color:var(--accent); margin:14px 0 6px; } .bp li { margin:3px 0; } .bp code { background:#222634; padding:1px 5px; border-radius:4px; font-size:12px; }
+  .empty { color:var(--muted); padding:30px; text-align:center; }
+  .more { display:block; margin:16px auto; }
+  #gate { position:fixed; inset:0; background:var(--bg); display:flex; align-items:center; justify-content:center; z-index:10; }
+  #gate form { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:26px; width:320px; display:flex; flex-direction:column; gap:10px; }
+  #gate h1 { margin:0 0 6px; font-size:18px; }
+  #gate input[type=password] { padding:10px; font-size:15px; }
+  #gate .primary { background:var(--accent); color:#0f1115; font-weight:700; border:none; cursor:pointer; }
+  #gate .err { color:var(--red); font-size:12px; min-height:16px; }
+  .bplist { display:flex; flex-direction:column; gap:10px; }
+  /* 블루프린트 시트(모달): 카드 안에 펼치면 폰에서 닫기 버튼이 멀어지므로 화면을 덮는 시트로 */
+  #bpModal { position:fixed; inset:0; background:rgba(0,0,0,.65); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
+  #bpModal .sheet { background:var(--card); width:100%; max-width:860px; max-height:92vh; border-radius:14px 14px 0 0; display:flex; flex-direction:column; border:1px solid var(--line); }
+  #bpModal .bar { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  #bpModal .bar .t { font-size:14px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #bpModal .bar .acts { display:flex; gap:6px; flex-shrink:0; }
+  #bpModal .bar button { flex-shrink:0; background:var(--accent); color:#0f1115; font-weight:700; border:none; padding:8px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  #bpModal .bar button.sec { background:#222634; color:var(--text); border:1px solid var(--line); font-weight:600; }
+  #bpModal .bar button.ok { background:var(--green); color:#0f1115; }
+  #bpRaw { width:100%; min-height:220px; margin-top:14px; background:#0f1115; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px; font-family:"SF Mono",Menlo,monospace; font-size:12px; }
+  #bpModal .body { overflow:auto; padding:0 16px 28px; -webkit-overflow-scrolling:touch; }
+  #bpModal .body .bp { border-top:none; }
+  #bpModal .close-bottom { display:block; margin:18px auto 0; background:#222634; color:var(--text); border:1px solid var(--line); padding:9px 18px; border-radius:8px; cursor:pointer; }
+  .bplist .card h3 { font-size:14px; }
+  .viewtog { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .viewtog button { border:none; border-radius:0; background:#222634; color:var(--muted); cursor:pointer; }
+  .viewtog button.on { background:var(--accent); color:#0f1115; font-weight:700; }
+  /* 날짜별 보기: 그룹 헤더(summary)는 스크롤해도 위에 붙어 있게 */
+  .dgroup { margin-bottom:14px; }
+  .dgroup > summary { position:sticky; top:0; z-index:5; list-style:none; cursor:pointer; display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+    background:var(--bg); padding:10px 4px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+  .dgroup > summary::-webkit-details-marker { display:none; }
+  .dgroup > summary::before { content:'▸'; color:var(--muted); width:10px; }
+  .dgroup[open] > summary::before { content:'▾'; }
+  .dgroup .dl { font-size:15px; font-weight:700; }
+  .dgroup .ds { font-size:12px; color:var(--muted); display:flex; gap:10px; }
+  .dgroup .ds .hi { color:var(--green); } .dgroup .ds .bpn { color:var(--purple); }
+</style>
+</head>
+<body>
+<div id="gate"><form id="gateForm"><h1>AI Info Radar 잠금</h1><input type="password" id="pw" placeholder="비밀번호" autofocus autocomplete="current-password"><label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="remember" checked> 이 기기에서 기억</label><div class="err" id="gateErr"></div><button class="primary" type="submit">열기</button></form></div>
+
+<header>
+  <div><h1>AI Info Radar</h1><div class="meta" id="meta"></div></div>
+  <div style="display:flex;gap:12px;align-items:center"><label style="font-size:13px;display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="easyMode"> 쉬운 설명 모드</label><button id="lock">잠금</button></div>
+</header>
+<main>
+  <div class="metrics" id="metrics"></div>
+  <div class="tabs"><span class="tab active" data-tab="feed">피드</span><span class="tab" data-tab="bps">블루프린트</span></div>
+  <section id="feedPane">
+    <div class="filters">
+      <span class="viewtog"><button type="button" data-view="score">점수순</button><button type="button" data-view="date">날짜별</button></span>
+      <select id="fTopic"><option value="">모든 주제</option></select>
+      <select id="fSource"><option value="">모든 소스</option></select>
+      <select id="fKind"><option value="">구현+뉴스</option><option value="구현">🛠 구현</option><option value="뉴스">📰 뉴스</option></select>
+      <select id="fStatus"><option value="">모든 상태</option></select>
+      <select id="fCat"><option value="">모든 카테고리</option></select>
+      <label style="font-size:12px;color:var(--muted)">최소 <span id="minV">0</span>점 <input type="range" id="fMin" min="0" max="100" step="5" value="0"></label>
+      <select id="fSort"><option value="score">점수순</option><option value="date">최신순</option></select>
+      <input type="search" id="fQ" placeholder="검색 (제목·요약·작성자)">
+      <label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="fBp"> 블루프린트 있는 것만</label>
+    </div>
+    <div class="grid" id="feed"></div>
+    <button class="more" id="more" style="display:none">더 보기</button>
+  </section>
+  <section id="bpsPane" style="display:none"><div class="bplist" id="bps"></div></section>
+</main>
+
+<div id="bpModal" style="display:none">
+  <div class="sheet">
+    <div class="bar"><span class="t" id="bpTitle">블루프린트</span>
+      <span class="acts"><button type="button" class="sec" id="bpCopy" title="마크다운 원문 복사">복사</button><button type="button" class="sec" id="bpCopyPrompt" title="Claude Code에 붙여넣을 구현 지시문으로 복사">지시문 복사</button><button type="button" id="bpClose">닫기 ✕</button></span></div>
+    <div class="body"><div class="bp" id="bpBody"></div>
+      <textarea id="bpRaw" style="display:none" readonly></textarea>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:18px">
+        <button type="button" class="close-bottom" id="bpCopyBottom" style="margin:0">지시문 복사</button>
+        <button type="button" class="close-bottom" id="bpCloseBottom" style="margin:0">닫기</button>
+      </div></div>
+  </div>
+</div>
+
+<script>
+  const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  async function decrypt(pw, enc) {
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name:'PBKDF2', salt:b64(enc.salt), iterations:enc.iter, hash:'SHA-256' }, km, { name:'AES-GCM', length:256 }, false, ['decrypt']);
+    const pt = await crypto.subtle.decrypt({ name:'AES-GCM', iv:b64(enc.iv) }, key, b64(enc.ct));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  const PW_KEY = 'radar-dashboard-pw';
+  (async () => {
+    const enc = await (await fetch('data.enc.json?ts=' + Date.now(), { cache:'no-store' })).json();
+    const tryOpen = async (pw, remember) => {
+      try {
+        window.RADAR = await decrypt(pw, enc);
+        if (remember) localStorage.setItem(PW_KEY, pw); else localStorage.removeItem(PW_KEY);
+        document.getElementById('gate').style.display = 'none';
+        boot();
+        return true;
+      } catch (e) { return false; }
+    };
+    const saved = localStorage.getItem(PW_KEY);
+    if (saved && await tryOpen(saved, true)) return;
+    document.getElementById('gateForm').onsubmit = async ev => {
+      ev.preventDefault();
+      const ok = await tryOpen(document.getElementById('pw').value, document.getElementById('remember').checked);
+      if (!ok) document.getElementById('gateErr').textContent = '비밀번호가 맞지 않습니다';
+    };
+  })();
+  document.getElementById('lock').onclick = () => { localStorage.removeItem(PW_KEY); location.reload(); };
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const STATUS = { new:'미처리', rescore:'재평가 대기', processed:'처리됨', briefed:'브리핑됨', approved:'구현 승인', skipped:'스킵' };
+  const PAGE = 30;
+
+  function boot() {
+    const D = window.RADAR, items = D.items, bps = D.blueprints || {};
+    document.getElementById('meta').innerHTML =
+      `주제: <span class="topic">${esc(D.topic || '(기본)')}</span><br>갱신 ${new Date(D.generatedAt).toLocaleString('ko-KR')} · 전체 ${items.length}건`;
+    const m = [
+      ['전체 수집', items.length], ['70점 이상', items.filter(i => i.score >= 70).length],
+      ['블루프린트', items.filter(i => i.blueprint).length], ['🛠 구현', items.filter(i => i.kind === '구현').length],
+      ['📰 뉴스', items.filter(i => i.kind === '뉴스').length], ['미처리', items.filter(i => i.status === 'new').length],
+    ];
+    document.getElementById('metrics').innerHTML = m.map(([l, n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+    const uniq = a => [...new Set(a.filter(Boolean))].sort();
+    const fill = (id, vals, label) => { const s = document.getElementById(id); vals.forEach(v => s.add(new Option(label ? label(v) : v, v))); };
+    fill('fTopic', uniq(items.map(i => i.topic)), v => v.length > 40 ? v.slice(0, 40) + '…' : v);
+    fill('fSource', uniq(items.map(i => i.source)));
+    fill('fStatus', uniq(items.map(i => i.status)), v => STATUS[v] || v);
+    fill('fCat', uniq(items.map(i => i.category)));
+    if (D.topic && [...document.getElementById('fTopic').options].some(o => o.value === D.topic)) document.getElementById('fTopic').value = D.topic;
+
+    let shown = PAGE;
+    const $ = id => document.getElementById(id);
+    const filtered = () => {
+      const t = $('fTopic').value, s = $('fSource').value, k = $('fKind').value, st = $('fStatus').value, c = $('fCat').value;
+      const min = +$('fMin').value, q = $('fQ').value.trim().toLowerCase(), onlyBp = $('fBp').checked;
+      let r = items.filter(i =>
+        (!t || i.topic === t) && (!s || i.source === s) && (!k || i.kind === k) && (!st || i.status === st) && (!c || i.category === c) &&
+        ((i.score ?? -1) >= min || (min === 0)) && (!onlyBp || i.blueprint) &&
+        (!q || [i.title, i.summary, i.author, i.category].join(' ').toLowerCase().includes(q)));
+      r.sort($('fSort').value === 'score'
+        ? (a, b) => (b.score ?? -1) - (a.score ?? -1)
+        : (a, b) => (b.published_at || b.collected_at || '').localeCompare(a.published_at || a.collected_at || ''));
+      return r;
+    };
+    const EASY_KEY = 'radar-easy-mode';
+    let easy = localStorage.getItem(EASY_KEY) !== '0';   // 기본: 쉬운 설명 모드 켬
+    $('easyMode').checked = easy;
+    $('easyMode').onchange = () => { easy = $('easyMode').checked; localStorage.setItem(EASY_KEY, easy ? '1' : '0'); render(); };
+    const scoreCls = s => s == null ? '' : s >= 70 ? 'hi' : s >= 40 ? 'mid' : 'lo';
+    const card = i => `<div class="card ${i.status === 'skipped' ? 'dim' : ''}">
+      <div class="top"><h3>${esc(i.title || '(제목 없음)')}${i.title_orig && i.title_orig !== i.title ? `<div class="orig">${esc(i.title_orig)}</div>` : ''}</h3><span class="score ${scoreCls(i.score)}">${i.score ?? '–'}</span></div>
+      <div class="tags">${i.kind ? `<span class="tag kind-${i.kind}">${i.kind === '구현' ? '🛠 구현' : '📰 뉴스'}</span>` : ''}<span class="tag src">${esc(i.source)}</span>${i.category ? `<span class="tag">${esc(i.category)}</span>` : ''}<span class="tag">${STATUS[i.status] || esc(i.status)}</span>${i.blueprint ? '<span class="tag bp">📋 블루프린트</span>' : ''}</div>
+      ${easy ? (i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : (i.summary ? `<div class="summary">${esc(i.summary)}</div><div class="noeasy">쉬운 설명은 다음 처리 때 생성됩니다</div>` : '')) : (i.summary ? `<div class="summary">${esc(i.summary)}</div>` : '')}
+      ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
+      <div class="foot"><span>${esc(i.author || '')} ${i.published_at ? '· ' + i.published_at.slice(0, 10) : ''}</span>
+        <span><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a> ${i.blueprint ? `<button data-bp="${esc(i.blueprint)}">블루프린트</button>` : ''}</span></div>
+      <div class="bp" style="display:none"></div></div>`;
+    // 보기 방식: 점수순(기존 목록) / 날짜별(collected_at 날짜로 묶음). 기본은 날짜별, 선택은 기기에 기억
+    const VIEW_KEY = 'radar-feed-view';
+    let view = 'date';
+    try { if (localStorage.getItem(VIEW_KEY) === 'score') view = 'score'; } catch (e) {}
+    const dayOpen = {};   // 사용자가 직접 펼치거나 접은 날짜 (다시 그려도 유지)
+    const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dayLabel = key => {
+      const now = new Date(), y = new Date(now); y.setDate(now.getDate() - 1);
+      if (key === ymd(now)) return '오늘';
+      if (key === ymd(y)) return '어제';
+      const d = new Date(key + 'T00:00:00');
+      if (isNaN(d)) return '날짜 없음';
+      return `${d.getMonth() + 1}월 ${d.getDate()}일 (${'일월화수목금토'[d.getDay()]})${d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : ''}`;
+    };
+    const renderByDate = r => {
+      const groups = new Map();
+      r.forEach(i => { const k = (i.collected_at || '').slice(0, 10) || '없음'; (groups.get(k) || groups.set(k, []).get(k)).push(i); });
+      const keys = [...groups.keys()].sort().reverse();
+      $('feed').innerHTML = keys.map(k => {
+        const g = groups.get(k).sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+        const lbl = dayLabel(k), open = dayOpen[k] ?? (lbl === '오늘' || lbl === '어제');
+        return `<details class="dgroup" data-day="${esc(k)}"${open ? ' open' : ''}><summary><span class="dl">${esc(lbl)}</span>
+          <span class="ds"><span>${g.length}건</span><span class="hi">70점↑ ${g.filter(i => i.score >= 70).length}</span><span class="bpn">📋 ${g.filter(i => i.blueprint).length}</span></span></summary>
+          <div class="grid">${open ? g.map(card).join('') : ''}</div></details>`;
+      }).join('');
+      // 접힌 그룹은 카드를 그리지 않았다가 펼칠 때 채움
+      $('feed').querySelectorAll('.dgroup').forEach(el => el.addEventListener('toggle', () => {
+        const k = el.dataset.day; dayOpen[k] = el.open;
+        const box = el.querySelector('.grid');
+        if (el.open && !box.childElementCount) box.innerHTML = groups.get(k).map(card).join('');
+      }));
+    };
+    const render = () => {
+      const r = filtered();
+      document.querySelectorAll('.viewtog button').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+      $('fSort').style.display = view === 'score' ? '' : 'none';   // 날짜별은 그룹 안에서 항상 점수순
+      $('feed').className = view === 'date' ? '' : 'grid';
+      if (!r.length) { $('feed').innerHTML = '<div class="empty">조건에 맞는 항목이 없습니다</div>'; $('more').style.display = 'none'; return; }
+      if (view === 'date') { renderByDate(r); $('more').style.display = 'none'; return; }
+      $('feed').innerHTML = r.slice(0, shown).map(card).join('');
+      $('more').style.display = r.length > shown ? 'block' : 'none';
+      $('more').textContent = `더 보기 (${Math.min(shown, r.length)}/${r.length})`;
+    };
+    document.querySelectorAll('.viewtog button').forEach(b => b.onclick = () => {
+      view = b.dataset.view; shown = PAGE;
+      try { localStorage.setItem(VIEW_KEY, view); } catch (e) {}
+      render();
+    });
+    ['fTopic','fSource','fKind','fStatus','fCat','fSort','fBp'].forEach(id => $(id).onchange = () => { shown = PAGE; render(); });
+    $('fQ').oninput = () => { shown = PAGE; render(); };
+    $('fMin').oninput = () => { $('minV').textContent = $('fMin').value; shown = PAGE; render(); };
+    $('more').onclick = () => { shown += PAGE; render(); };
+    // 블루프린트는 화면을 덮는 시트로 열고, 상단 고정 닫기 + 하단 닫기 + 배경 탭 + ESC로 닫음
+    let currentBp = null;
+    const openBp = (name, title) => {
+      currentBp = { name, title: title || name, md: bps[name] || '' };
+      $('bpTitle').textContent = currentBp.title;
+      $('bpBody').innerHTML = marked.parse(currentBp.md || '(블루프린트 내용 없음)');
+      $('bpRaw').style.display = 'none';
+      $('bpModal').style.display = 'flex';
+      $('bpModal').querySelector('.body').scrollTop = 0;
+      document.body.style.overflow = 'hidden';
+    };
+    const closeBp = () => { $('bpModal').style.display = 'none'; document.body.style.overflow = ''; };
+    $('bpClose').onclick = closeBp;
+    $('bpCloseBottom').onclick = closeBp;
+
+    // 복사: 클립보드 API → 실패하면(권한/구형 브라우저) 원문 textarea를 펼쳐 길게 눌러 복사할 수 있게
+    const promptText = () => `다음 블루프린트를 이 프로젝트에 구현해줘. 먼저 구현 계획을 단계별로 정리해서 확인받고, 승인 후 진행해.\n\n출처: ${currentBp.name}\n\n${currentBp.md}`;
+    const flash = (btn, ok) => { const t = btn.textContent; btn.textContent = ok ? '복사됨 ✓' : '복사 실패'; btn.classList.toggle('ok', ok); setTimeout(() => { btn.textContent = t; btn.classList.remove('ok'); }, 1600); };
+    const copyText = async (text, btn) => {
+      try { await navigator.clipboard.writeText(text); flash(btn, true); return; } catch (e) {}
+      const ta = $('bpRaw'); ta.value = text; ta.style.display = 'block'; ta.focus(); ta.select();
+      let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      flash(btn, ok);
+      if (!ok) ta.scrollIntoView({ block: 'center' });   // 수동 복사용으로 원문을 남겨둠
+    };
+    $('bpCopy').onclick = () => copyText(currentBp.md, $('bpCopy'));
+    $('bpCopyPrompt').onclick = () => copyText(promptText(), $('bpCopyPrompt'));
+    $('bpCopyBottom').onclick = () => copyText(promptText(), $('bpCopyBottom'));
+    $('bpModal').onclick = ev => { if (ev.target === $('bpModal')) closeBp(); };
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeBp(); });
+    const onBpClick = ev => {
+      const b = ev.target.closest('button[data-bp]'); if (!b) return;
+      openBp(b.dataset.bp, b.closest('.card')?.querySelector('h3')?.firstChild?.textContent);
+    };
+    $('feed').onclick = onBpClick;
+    $('bps').onclick = onBpClick;
+    render();
+
+    // 블루프린트 탭
+    const withBp = items.filter(i => i.blueprint).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    $('bps').innerHTML = withBp.length ? withBp.map(i => `<div class="card"><div class="top"><h3>${esc(i.title)}</h3><span class="score ${scoreCls(i.score)}">${i.score}</span></div>
+      <div class="tags"><span class="tag src">${esc(i.source)}</span><span class="tag">${esc(i.topic || '').slice(0, 30)}</span><span class="tag">${esc(i.blueprint)}</span></div>
+      ${i.easy ? `<div class="easy">💬 ${esc(i.easy)}</div>` : ''}
+      ${i.use_cases ? `<div class="uses"><div class="h">💡 이걸로 할 수 있는 것</div><ul>${i.use_cases.split('\n').filter(Boolean).map(u => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
+      <div class="foot"><a href="${esc(i.url)}" target="_blank" rel="noopener">원문 ↗</a> <button data-bp="${esc(i.blueprint)}">블루프린트 보기</button></div></div>`).join('') : '<div class="empty">블루프린트가 없습니다</div>';
+    document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+      $('feedPane').style.display = t.dataset.tab === 'feed' ? '' : 'none';
+      $('bpsPane').style.display = t.dataset.tab === 'bps' ? '' : 'none';
+    });
+  }
+</script>
+</body>
+</html>
